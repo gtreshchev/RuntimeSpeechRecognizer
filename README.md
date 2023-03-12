@@ -22,14 +22,14 @@
     <a href="https://discord.gg/s3e53uByCq">Discord</a>
   </p>
 
-## Features
+## Key features
 
 - Fast recognition speed
-- English-only and multilingual model support
+- English-only and multilingual models available, with multilingual supporting over 100 languages.
 - Different model sizes available (from 75 Mb to 2.9 Gb)
-- Optional translation of recognized speech into English
+- Optional translation of recognized speech to English
 - Customizable properties
-- Convenient size and language model selection in settings
+- Easy selection of model size and language in settings
 - No static libraries or external dependencies
 - Cross-platform compatibility
 
