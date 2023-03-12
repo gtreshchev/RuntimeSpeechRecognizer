@@ -103,7 +103,7 @@ struct FSpeechRecognitionParameters
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
 	bool bSingleSegment = false;
 
-	/** The maximum number of tokens (words) per text segment (0 = no limit) */
+	/** The maximum number of tokens per text segment (0 = no limit) */
 	UPROPERTY(BlueprintReadWrite, meta = (ClampMin = "0", UIMin = "0"), Category = "Runtime Speech Recognizer")
 	int32 MaxTokens = 0;
 
@@ -287,9 +287,9 @@ public:
 	bool SetSingleSegment(bool bSingleSegment);
 
 	/**
-	 * Sets the maximum number of tokens (words) per text segment (0 = no limit)
+	 * Sets the maximum number of tokens per text segment (0 = no limit)
 	 *
-	 * @param Value The maximum number of tokens (words) per text segment (0 = no limit)
+	 * @param Value The maximum number of tokens per text segment (0 = no limit)
 	 * @return True if the setting was set successfully, false otherwise
 	 * @note Can only be called when the thread is stopped
 	 */
