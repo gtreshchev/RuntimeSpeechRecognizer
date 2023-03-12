@@ -26,7 +26,7 @@
 
 - Fast recognition speed
 - English-only and multilingual model support
-- Different model sizes available (from 76 Mb to 3 Gb)
+- Different model sizes available (from 75 Mb to 2.9 Gb)
 - Optional translation of recognized speech into English
 - Customizable properties
 - Convenient size and language model selection in settings
