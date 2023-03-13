@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Engine/EngineBaseTypes.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 25
 #include "DSP/BufferVectorOperations.h"

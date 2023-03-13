@@ -1,36 +1,38 @@
 {
-	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0",
-	"FriendlyName": "Runtime Speech Recognizer",
-	"Description": "Runtime Speech Recognizer is an open-source plugin that enables real-time, offline speech recognition. Based on Whisper OpenAI technology and supports multiple language models pre-selected in the plugin's settings.",
-	"Category": "Audio",
-	"CreatedBy": "Georgy Treshchev",
-	"CreatedByURL": "https://github.com/gtreshchev",
-	"DocsURL": "https://github.com/gtreshchev/RuntimeSpeechRecognizer/wiki",
-	"MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/2b33311abdb048819664a6cfe0bbd90d",
-	"SupportURL": "https://georgy.dev/",
-	"CanContainContent": true,
-	"IsBetaVersion": false,
-	"IsExperimentalVersion": false,
-	"Installed": true,
-	"Modules": [
-		{
-			"Name": "RuntimeSpeechRecognizer",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "RuntimeSpeechRecognizerEditor",
-			"Type": "Editor",
-			"LoadingPhase": "PostEngineInit"
-		}
-	],
-	"Plugins": [
-		{
-			"Name": "EditorScriptingUtilities",
-			"Enabled": true,
-			"TargetAllowList": [ "Editor" ]
-		}
-	]
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "Runtime Speech Recognizer",
+  "Description": "Runtime Speech Recognizer is an open-source plugin that enables real-time, offline speech recognition. Based on Whisper OpenAI technology and supports multiple language models pre-selected in the plugin's settings.",
+  "Category": "Audio",
+  "CreatedBy": "Georgy Treshchev",
+  "CreatedByURL": "https://github.com/gtreshchev",
+  "DocsURL": "https://github.com/gtreshchev/RuntimeSpeechRecognizer/wiki",
+  "MarketplaceURL": "com.epicgames.launcher://ue/marketplace/product/2b33311abdb048819664a6cfe0bbd90d",
+  "SupportURL": "https://georgy.dev/",
+  "CanContainContent": true,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": false,
+  "Installed": true,
+  "Modules": [
+    {
+      "Name": "RuntimeSpeechRecognizer",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "RuntimeSpeechRecognizerEditor",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    }
+  ]
 }
