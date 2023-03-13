@@ -25,7 +25,7 @@
 ## Key features
 
 - Fast recognition speed
-- English-only and multilingual models available, with multilingual supporting over 100 languages.
+- English-only and multilingual models available, with multilingual supporting 100 languages
 - Different model sizes available (from 75 Mb to 2.9 Gb)
 - Optional translation of recognized speech to English
 - Customizable properties
