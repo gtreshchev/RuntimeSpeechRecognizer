@@ -16,6 +16,10 @@
 #include <vector>
 #include <regex>
 #include <random>
+// RuntimeSpeechRecognizer changes
+#include <locale>
+#include <cctype>
+// RuntimeSpeechRecognizer changes
 
 #if defined(GGML_BIG_ENDIAN)
 #include <bit>
