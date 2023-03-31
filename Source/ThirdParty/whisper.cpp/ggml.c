@@ -153,7 +153,14 @@ typedef double ggml_float;
 #undef bool
 #define bool _Bool
 #else
+// RuntimeSpeechRecognizer changes
+/* #include <immintrin.h> */
+#if defined(__AVX512F__) || defined(__AVX512BW__) || defined(__AVX__) || defined(__AVX2__)
 #include <immintrin.h>
+#elif defined(__XOP__)
+#include <x86intrin.h>
+#endif
+// RuntimeSpeechRecognizer changes
 #endif
 #endif
 
@@ -1328,7 +1335,15 @@ struct ggml_state {
 
 // global state
 static struct ggml_state g_state;
-static atomic_int g_state_barrier = 0;
+// RuntimeSpeechRecognizer changes
+/* static atomic_int g_state_barrier = 0; */
+#if !defined(ATOMIC_VAR_INIT) || (__cplusplus >= 202002L)
+static atomic_int g_state_barrier{0};
+#else
+ static atomic_int g_state_barrier = ATOMIC_VAR_INIT(0);
+#endif
+
+// RuntimeSpeechRecognizer changes
 
 // barrier via spin lock
 inline static void ggml_critical_section_start(void) {
@@ -7300,9 +7315,20 @@ void ggml_graph_compute(struct ggml_context * ctx, struct ggml_cgraph * cgraph) 
     struct ggml_compute_state_shared state_shared = {
         /*.spin      =*/ GGML_LOCK_INITIALIZER,
         /*.n_threads =*/ n_threads,
-        /*.n_ready   =*/ 0,
-        /*.has_work  =*/ false,
-        /*.stop      =*/ false,
+        // RuntimeSpeechRecognizer changes
+        /*.n_ready   =*//* 0,*/
+        /*.has_work  =*/ /*false,*/
+        /*.stop      =*/ /*false,*/
+#if !defined(ATOMIC_VAR_INIT) || (__cplusplus >= 202002L)
+        /*.n_ready   =*/ {0},
+        /*.has_work  =*/ {false},
+        /*.stop      =*/ {false},
+#else
+        /*.n_ready   =*/ ATOMIC_VAR_INIT(0),
+        /*.has_work  =*/ ATOMIC_VAR_INIT(false),
+        /*.stop      =*/ ATOMIC_VAR_INIT(false),
+#endif
+         // RuntimeSpeechRecognizer changes
     };
     // RuntimeSpeechRecognizer changes
     /* struct ggml_compute_state * workers = n_threads > 1 ? alloca(sizeof(struct ggml_compute_state)*(n_threads - 1)) : NULL; */
