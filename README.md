@@ -13,7 +13,7 @@
     <a href="https://github.com/gtreshchev/RuntimeSpeechRecognizer/wiki"><strong>Explore the docs »</strong></a>
     <br/>
     <br/>
-    <a href="https://unrealengine.com/marketplace/product/runtime-speech-recognizer">Marketplace (in progress)</a>
+    <a href="https://unrealengine.com/marketplace/product/runtime-speech-recognizer">Marketplace</a>
     .
     <a href="https://github.com/gtreshchev/RuntimeSpeechRecognizer/releases">Releases</a>
     <br/>
