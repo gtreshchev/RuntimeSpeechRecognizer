@@ -155,10 +155,10 @@ typedef double ggml_float;
 #else
 // RuntimeSpeechRecognizer changes
 /* #include <immintrin.h> */
-#if defined(__AVX512F__) || defined(__AVX512BW__) || defined(__AVX__) || defined(__AVX2__)
-#include <immintrin.h>
-#elif defined(__XOP__)
+#ifdef __XOP__
 #include <x86intrin.h>
+#else
+#include <immintrin.h>
 #endif
 // RuntimeSpeechRecognizer changes
 #endif
