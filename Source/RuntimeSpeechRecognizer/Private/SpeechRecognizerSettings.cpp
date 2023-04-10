@@ -71,6 +71,7 @@ void USpeechRecognizerSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 			FNotificationInfo Info(LOCTEXT("SettingSpeechRecognizerPackagingFailed", "Copying language model to project content directory failed"));
 			Info.ExpireDuration = 5.0f;
 			FSlateNotificationManager::Get().AddNotification(Info)->SetCompletionState(SNotificationItem::CS_Fail);
+			return;
 		}
 
 		{
