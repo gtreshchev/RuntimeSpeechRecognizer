@@ -155,7 +155,7 @@ typedef double ggml_float;
 #else
 // RuntimeSpeechRecognizer changes
 /* #include <immintrin.h> */
-#if defined(__SSE__) || defined(__SSE2__) || defined(__SSE3__) || defined(__SSSE3__) || defined(__SSE4_1__) || defined(__SSE4_2__) || defined(__XOP__)
+#ifdef __XOP__
 #include <x86intrin.h>
 #else
 #include <immintrin.h>
