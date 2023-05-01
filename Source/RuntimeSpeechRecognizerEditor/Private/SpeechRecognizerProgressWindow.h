@@ -109,7 +109,7 @@ public:
 		];
 
 		SBorder::Construct(SBorder::FArguments()
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 27
+#if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 0)
 		                   .BorderImage(FEditorStyle::GetBrush("Menu.Background"))
 #else
 		                   .BorderImage(FAppStyle::GetBrush("Brushes.Header"))
