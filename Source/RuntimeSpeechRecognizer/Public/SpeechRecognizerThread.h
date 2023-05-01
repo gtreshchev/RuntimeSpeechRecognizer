@@ -26,6 +26,9 @@ DECLARE_DELEGATE_OneParam(FOnSpeechRecognizedTextSegment, const FString&);
 /** Static delegate for speech recognition errors. The error message and long error message are passed as parameters */
 DECLARE_DELEGATE_TwoParams(FOnSpeechRecognitionError, const FString& /* ShortErrorMessage */, const FString& /* LongErrorMessage */);
 
+/** Static delegate for speech recognition progress. The progress value is passed as a parameter */
+//DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionProgress, int32 /* ProgressValue */);
+
 /**
  * User data for Whisper speech recognizer
  * Used to identify the thread worker responsible for recognized words
@@ -150,7 +153,10 @@ public:
 	 *
 	 * @return True if the thread was successfully started, false otherwise
 	 */
-	bool StartThread();
+	TFuture<bool> StartThread();
+private:
+	TUniquePtr<TPromise<bool>> StartThreadPromise;
+public:
 
 	/**
 	 * Stops the thread worker
@@ -199,6 +205,9 @@ public:
 
 	/** Delegate broadcast when recognized words are received */
 	FOnSpeechRecognizedTextSegment OnRecognizedTextSegment;
+
+	/** Delegate broadcast when the speech recognition progress changes */
+	/*FOnSpeechRecognitionProgress OnRecognitionProgress;*/
 
 	/** Delegate broadcast when an error occurs during speech recognition */
 	FOnSpeechRecognitionError OnRecognitionError;
@@ -324,13 +333,14 @@ public:
 
 private:
 	/**
-	 * Loads the language model. Reports an error if the language model could not be loaded
+	 * Asynchronously load the language model data and pass it to the provided callback
 	 *
-	 * @param ModelBulkDataPtr Pointer to the language model bulk data
-	 * @param ModelBulkDataSize Size of the language model bulk data
-	 * @return True if the language model was loaded successfully, false otherwise
+	 * @param OnLoadLanguageModel The callback function to pass the loaded language model data to
+	 * The first argument indicates whether the load succeeded or not
+	 * The second argument is a pointer to the language model bulk data
+	 * The third argument is the size of the language model bulk data in memory
 	 */
-	bool LoadLanguageModel(uint8*& ModelBulkDataPtr, int64& ModelBulkDataSize);
+	void LoadLanguageModel(TFunction<void(bool, uint8*, int64)>&& OnLoadLanguageModel);
 
 	/**
 	 * Releases the memory used by the language model. Intended to be called when the thread is stopped

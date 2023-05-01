@@ -8,21 +8,30 @@ USpeechRecognizer::USpeechRecognizer()
 {
 	Thread = MakeShared<FSpeechRecognizerThread>();
 	ensure(Thread.IsValid());
-	
+
 	Thread->OnRecognitionFinished.BindWeakLambda(this, [this]()
 	{
 		OnRecognitionFinished.Broadcast();
+		OnRecognitionFinishedNative.Broadcast();
 	});
 
 	Thread->OnRecognitionError.BindWeakLambda(this, [this](const FString& ShortErrorMessage, const FString& LongErrorMessage)
 	{
 		OnRecognitionError.Broadcast(ShortErrorMessage, LongErrorMessage);
+		OnRecognitionErrorNative.Broadcast(ShortErrorMessage, LongErrorMessage);
 	});
 
 	Thread->OnRecognizedTextSegment.BindWeakLambda(this, [this](const FString& RecognizedWords)
 	{
 		OnRecognizedTextSegment.Broadcast(RecognizedWords);
+		OnRecognizedTextSegmentNative.Broadcast(RecognizedWords);
 	});
+
+	/*Thread->OnRecognitionProgress.BindWeakLambda(this, [this](int32 Progress)
+	{
+		OnRecognitionProgress.Broadcast(Progress);
+		OnRecognitionProgressNative.Broadcast(Progress);
+	});*/
 }
 
 USpeechRecognizer* USpeechRecognizer::CreateSpeechRecognizer()
@@ -30,9 +39,14 @@ USpeechRecognizer* USpeechRecognizer::CreateSpeechRecognizer()
 	return NewObject<USpeechRecognizer>();
 }
 
-bool USpeechRecognizer::StartSpeechRecognition()
+void USpeechRecognizer::StartSpeechRecognition(const FOnSpeechRecognitionStartedDynamic& OnStarted)
 {
-	return Thread->StartThread();
+	StartSpeechRecognition(FOnSpeechRecognitionStartedStatic::CreateWeakLambda(this, [OnStarted](bool bSucceeded) { OnStarted.ExecuteIfBound(bSucceeded); }));
+}
+
+void USpeechRecognizer::StartSpeechRecognition(const FOnSpeechRecognitionStartedStatic& OnStarted)
+{
+	Thread->StartThread().Next([OnStarted](bool bSucceeded) { OnStarted.ExecuteIfBound(bSucceeded); });
 }
 
 void USpeechRecognizer::StopSpeechRecognition()
@@ -106,7 +120,7 @@ bool USpeechRecognizer::SetNoContext(bool bNoContext)
 }
 
 bool USpeechRecognizer::SetSingleSegment(bool bSingleSegment)
-{	
+{
 	return Thread->SetSingleSegment(bSingleSegment);
 }
 

@@ -15,7 +15,10 @@
 
 USpeechRecognizerSettings::USpeechRecognizerSettings()
 	: ModelSize(ESpeechRecognizerModelSize::Tiny)
-	, ModelLanguage(ESpeechRecognizerModelLanguage::EnglishOnly)
+  , ModelLanguage(ESpeechRecognizerModelLanguage::EnglishOnly)
+#if WITH_EDITORONLY_DATA
+  , ModelDownloadBaseUrl(TEXT("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"))
+#endif
 {
 }
 
@@ -26,13 +29,13 @@ FString USpeechRecognizerSettings::GetLanguageModelAssetName() const
 
 FString USpeechRecognizerSettings::GetLanguageModelPackagePath() const
 {
-	return TEXT("/Game/RuntimeSpeechRecognizer/");
+	return TEXT("/RuntimeSpeechRecognizer");
 }
 
 FString USpeechRecognizerSettings::GetLanguageModelAssetPath() const
 {
 	const FString AssetName = GetLanguageModelAssetName();
-	return FString::Printf(TEXT("%s%s.%s"), *GetLanguageModelPackagePath(), *AssetName, *AssetName);
+	return FString::Printf(TEXT("%s.%s"), *FPaths::Combine(*GetLanguageModelPackagePath(), *AssetName), *AssetName);
 }
 
 #if WITH_EDITOR
@@ -51,32 +54,6 @@ void USpeechRecognizerSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 		{
 			ModelLanguage = ESpeechRecognizerModelLanguage::Multilingual;
 			SaveConfig();
-		}
-	}
-
-	// Copying language model to project content directory (staging)
-	if (PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(USpeechRecognizerSettings, ModelSize) ||
-		PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(USpeechRecognizerSettings, ModelLanguage))
-	{
-		// TODO: Make this window appear instantly (now it is displayed only after processing, as it uses one thread)
-		{
-			FNotificationInfo Info(LOCTEXT("SettingSpeechRecognizerPackagingProgress", "Copying language model to project content directory..."));
-			Info.FadeInDuration = 0.0f;
-			FSlateNotificationManager::Get().AddNotification(Info)->SetCompletionState(SNotificationItem::CS_Pending);
-		}
-
-		const FRuntimeSpeechRecognizerEditorModule& MyEditorModule = FModuleManager::LoadModuleChecked<FRuntimeSpeechRecognizerEditorModule>("RuntimeSpeechRecognizerEditor");
-		if (!MyEditorModule.SetupStaging())
-		{
-			FNotificationInfo Info(LOCTEXT("SettingSpeechRecognizerPackagingFailed", "Copying language model to project content directory failed"));
-			Info.ExpireDuration = 5.0f;
-			FSlateNotificationManager::Get().AddNotification(Info)->SetCompletionState(SNotificationItem::CS_Fail);
-			return;
-		}
-
-		{
-			FNotificationInfo Info(LOCTEXT("SettingSpeechRecognizerPackagingSuccess", "Copying language model to project content directory succeeded"));
-			FSlateNotificationManager::Get().AddNotification(Info)->SetCompletionState(SNotificationItem::CS_Success);
 		}
 	}
 }

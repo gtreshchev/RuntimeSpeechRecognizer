@@ -19,7 +19,9 @@ public class RuntimeSpeechRecognizerEditor : ModuleRules
 				"RuntimeSpeechRecognizer",
 				"UnrealEd",
 				"Projects",
-				"EditorScriptingUtilities"
+				"EditorScriptingUtilities",
+				"HTTP",
+				"EditorStyle"
 			}
 		);
 

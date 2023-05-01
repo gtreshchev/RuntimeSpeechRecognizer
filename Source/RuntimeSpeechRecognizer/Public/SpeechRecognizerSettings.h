@@ -26,6 +26,12 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Runtime Speech Recognizer")
 	ESpeechRecognizerModelLanguage ModelLanguage;
 
+#if WITH_EDITORONLY_DATA
+	/** The base URL to download the language model from */
+	UPROPERTY(Config, EditAnywhere, Category = "Advanced Runtime Speech Recognizer")
+	FString ModelDownloadBaseUrl;
+#endif
+
 	/**
 	 * Get the name of the language model asset
 	 * The format is "[AssetName]"
