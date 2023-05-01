@@ -226,7 +226,7 @@ extern "C" {
     // Make sure to call whisper_pcm_to_mel() or whisper_set_mel() first
     // Returns the top language id or negative on failure
     // If not null, fills the lang_probs array with the probabilities of all languages
-    // The array must be whispe_lang_max_id() + 1 in size
+    // The array must be whisper_lang_max_id() + 1 in size
     // ref: https://github.com/openai/whisper/blob/main/whisper/decoding.py#L18-L69
     WHISPER_API int whisper_lang_auto_detect(
             struct whisper_context * ctx,
@@ -248,6 +248,19 @@ extern "C" {
     WHISPER_API int whisper_n_audio_ctx     (struct whisper_context * ctx);
     WHISPER_API int whisper_is_multilingual (struct whisper_context * ctx);
 
+    WHISPER_API int whisper_model_n_vocab      (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_audio_ctx  (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_audio_state(struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_audio_head (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_audio_layer(struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_text_ctx   (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_text_state (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_text_head  (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_text_layer (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_n_mels       (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_f16          (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_type         (struct whisper_context * ctx);
+
     // Token logits obtained from the last call to whisper_decode()
     // The logits for the last token are stored in the last row
     // Rows: n_tokens
@@ -257,6 +270,8 @@ extern "C" {
 
     // Token Id -> String. Uses the vocabulary in the provided context
     WHISPER_API const char * whisper_token_to_str(struct whisper_context * ctx, whisper_token token);
+    WHISPER_API const char * whisper_model_type_readable(struct whisper_context * ctx);
+
 
     // Special tokens
     WHISPER_API whisper_token whisper_token_eot (struct whisper_context * ctx);
@@ -282,7 +297,7 @@ extern "C" {
 
     // Available sampling strategies
     enum whisper_sampling_strategy {
-        WHISPER_SAMPLING_GREEDY,      // similar to OpenAI's GreefyDecoder
+        WHISPER_SAMPLING_GREEDY,      // similar to OpenAI's GreedyDecoder
         WHISPER_SAMPLING_BEAM_SEARCH, // similar to OpenAI's BeamSearchDecoder
     };
 
@@ -290,6 +305,9 @@ extern "C" {
     // Called on every newly generated text segment
     // Use the whisper_full_...() functions to obtain the text segments
     typedef void (*whisper_new_segment_callback)(struct whisper_context * ctx, struct whisper_state * state, int n_new, void * user_data);
+
+    // Progress callback
+    typedef void (*whisper_progress_callback)(struct whisper_context * ctx, struct whisper_state * state, int progress, void * user_data);
 
     // Encoder begin callback
     // If not NULL, called before the encoder starts
@@ -341,6 +359,7 @@ extern "C" {
 
         // tokens to provide to the whisper decoder as initial prompt
         // these are prepended to any existing text context from a previous call
+        const char * initial_prompt;
         const whisper_token * prompt_tokens;
         int prompt_n_tokens;
 
@@ -375,6 +394,10 @@ extern "C" {
         // called for every newly generated text segment
         whisper_new_segment_callback new_segment_callback;
         void * new_segment_callback_user_data;
+
+        // called on each progress update
+        whisper_progress_callback progress_callback;
+        void * progress_callback_user_data;
 
         // called each time before the encoder starts
         whisper_encoder_begin_callback encoder_begin_callback;

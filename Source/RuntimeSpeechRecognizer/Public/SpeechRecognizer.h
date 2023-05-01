@@ -7,14 +7,40 @@
 
 #include "SpeechRecognizer.generated.h"
 
+/** Dynamic delegate for speech recognition started */
+DECLARE_DYNAMIC_DELEGATE_OneParam(FOnSpeechRecognitionStartedDynamic, bool, bSucceeded);
+
+/** Static delegate for speech recognition started */
+DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionStartedStatic, bool);
+
+
 /** Dynamic delegate for speech recognition finished */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSpeechRecognitionFinishedDynamic);
+
+/** Static delegate for speech recognition finished */
+DECLARE_MULTICAST_DELEGATE(FOnSpeechRecognitionFinishedStatic);
+
 
 /** Dynamic delegate for recognized words */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognizedTextSegmentDynamic, const FString&, RecognizedWords);
 
+/** Static delegate for recognized words */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognizedTextSegmentStatic, const FString&);
+
+
 /** Dynamic delegate for speech recognition errors */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSpeechRecognitionErrorDynamic, const FString&, ShortErrorMessage, const FString&, LongErrorMessage);
+
+/** Static delegate for speech recognition errors */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnSpeechRecognitionErrorStatic, const FString&, const FString&);
+
+
+/** Dynamic delegate for speech recognition progress */
+/*DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressDynamic, int32, Progress);*/
+
+/** Static delegate for speech recognition progress */
+/*DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressStatic, int32);*/
+
 
 /**
  * Represents a speech recognizer that can recognize spoken words
@@ -41,7 +67,14 @@ public:
 	 * @return True if the speech recognition was started successfully, false otherwise
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Main")
-	bool StartSpeechRecognition();
+	void StartSpeechRecognition(const FOnSpeechRecognitionStartedDynamic& OnStarted);
+
+	/**
+	 * Starts the speech recognition. Ensure that all the needed parameters are set before calling this function. Suitable for use in C++
+	 *
+	 * @return True if the speech recognition was started successfully, false otherwise
+	 */
+	void StartSpeechRecognition(const FOnSpeechRecognitionStartedStatic& OnStarted);
 
 	/**
 	 * Stops the speech recognition. The speech recognition can be started again after calling this function
@@ -95,17 +128,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Info")
 	bool GetIsFinished() const;
 
-	/** Delegate broadcast when all the audio data has been processed */
+	/** Dynamic delegate broadcast when all the audio data has been processed */
 	UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
 	FOnSpeechRecognitionFinishedDynamic OnRecognitionFinished;
 
-	/** Delegate broadcast when recognized words are received */
+	/** Static delegate broadcast when all the audio data has been processed */
+	FOnSpeechRecognitionFinishedStatic OnRecognitionFinishedNative;
+
+	/** Dynamic delegate broadcast when recognized words are received */
 	UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
 	FOnSpeechRecognizedTextSegmentDynamic OnRecognizedTextSegment;
 
-	/** Delegate broadcast when an error occurs during speech recognition */
+	/** Static delegate broadcast when recognized words are received */
+	FOnSpeechRecognizedTextSegmentStatic OnRecognizedTextSegmentNative;
+
+	/** Dynamic delegate broadcast when an error occurs during speech recognition */
 	UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
 	FOnSpeechRecognitionErrorDynamic OnRecognitionError;
+
+	/** Static delegate broadcast when an error occurs during speech recognition */
+	FOnSpeechRecognitionErrorStatic OnRecognitionErrorNative;
+
+	/** Dynamic delegate broadcast when the speech recognition progress obtained */
+	/*UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
+	FOnSpeechRecognitionProgressDynamic OnRecognitionProgress;*/
+
+	/*** Static delegate broadcast when the speech recognition progress obtained */
+	/*FOnSpeechRecognitionProgressStatic OnRecognitionProgressNative;*/
 
 	/**
 	 * Sets the parameters for speech recognition. If you want to change only specific parameters, consider using the individual setter functions
@@ -116,7 +165,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|All")
 	bool SetRecognitionParameters(const FSpeechRecognitionParameters& Parameters);
-	
+
 	/**
 	 * Sets the default parameters suitable for streaming speech recognition
 	 *
