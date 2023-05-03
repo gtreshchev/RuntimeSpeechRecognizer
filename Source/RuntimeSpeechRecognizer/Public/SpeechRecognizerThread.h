@@ -122,6 +122,14 @@ struct FSpeechRecognitionParameters
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
 	float TemperatureToIncrease = 0.2f;
 
+	/** Whether to suppress blanks showing up in outputs */
+	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
+	bool bSuppressBlank = true;
+
+	/** Whether to suppress non speech tokens in outputs */
+	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
+	bool bSuppressNonSpeechTokens = false;
+
 	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
 	 */
@@ -330,6 +338,26 @@ public:
 	 * @note Can only be called when the thread is stopped
 	 */
 	bool SetTemperatureToIncrease(float Value);
+
+	/**
+	 * Sets whether to suppress blanks showing up in outputs
+	 *
+	 * @param bSuppressBlank Whether to suppress blanks showing up in outputs
+	 * @return True if the setting was set successfully, false otherwise
+	 * @note Can only be called when the thread is stopped
+	 * @author https://github.com/amartinz
+	 */
+	bool SetSuppressBlank(bool bSuppressBlank);
+
+	/**
+	 * Sets whether to suppress non speech tokens showing up in outputs
+	 *
+	 * @param bSuppressNonSpeechTokens Whether to suppress non speech tokens showing up in outputs
+	 * @return True if the setting was set successfully, false otherwise
+	 * @note Can only be called when the thread is stopped
+	 * @author https://github.com/amartinz
+	 */
+	bool SetSuppressNonSpeechTokens(bool bSuppressNonSpeechTokens);
 
 private:
 	/**

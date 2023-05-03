@@ -143,3 +143,13 @@ bool USpeechRecognizer::SetTemperatureToIncrease(float Value)
 {
 	return Thread->SetTemperatureToIncrease(Value);
 }
+
+bool USpeechRecognizer::SetSuppressBlank(bool bSuppressBlank)
+{
+	return Thread->SetSuppressBlank(bSuppressBlank);
+}
+
+bool USpeechRecognizer::SetSuppressNonSpeechTokens(bool bSuppressNonSpeechTokens)
+{
+	return Thread->SetSuppressNonSpeechTokens(bSuppressNonSpeechTokens);
+}

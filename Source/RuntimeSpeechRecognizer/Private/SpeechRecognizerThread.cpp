@@ -194,6 +194,9 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 	WhisperState.WhisperParameters->language = EnumToString(Language);
 	WhisperState.WhisperParameters->n_threads = NumOfThreads > 0 ? NumOfThreads : (FPlatformProcess::SupportsMultithreading() ? FMath::Min(6, FPlatformMisc::NumberOfCoresIncludingHyperthreads()) : 1);
 
+	WhisperState.WhisperParameters->suppress_blank = bSuppressBlank;
+	WhisperState.WhisperParameters->suppress_non_speech_tokens = bSuppressNonSpeechTokens;
+
 	WhisperState.WhisperParameters->speed_up = bSpeedUp;
 
 	// Setting up the new segment callback, which is called on every new recognized text segment
@@ -689,6 +692,30 @@ bool FSpeechRecognizerThread::SetTemperatureToIncrease(float Value)
 	}
 
 	RecognitionParameters.TemperatureToIncrease = Value;
+	return true;
+}
+
+bool FSpeechRecognizerThread::SetSuppressBlank(bool Value)
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set suppress blanks in output while the thread is running"));
+		return false;
+	}
+
+	RecognitionParameters.bSuppressBlank = Value;
+	return true;
+}
+
+bool FSpeechRecognizerThread::SetSuppressNonSpeechTokens(bool Value)
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set suppress non speech tokens in output while the thread is running"));
+		return false;
+	}
+
+	RecognitionParameters.bSuppressNonSpeechTokens = Value;
 	return true;
 }
 
