@@ -288,6 +288,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|Individual")
 	bool SetTemperatureToIncrease(float Value);
 
+	/**
+	 * Sets whether to suppress blanks showing up in outputs
+	 *
+	 * @param bSuppressBlank Whether to suppress blanks showing up in outputs
+	 * @return True if the setting was set successfully, false otherwise
+	 * @note Can only be called when the thread is stopped
+	 * @author https://github.com/amartinz
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|Individual")
+	bool SetSuppressBlank(bool bSuppressBlank);
+
+	/**
+	 * Sets whether to suppress non speech tokens showing up in outputs
+	 *
+	 * @param bSuppressNonSpeechTokens Whether to suppress non speech tokens showing up in outputs
+	 * @return True if the setting was set successfully, false otherwise
+	 * @note Can only be called when the thread is stopped
+	 * @author https://github.com/amartinz
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|Individual")
+	bool SetSuppressNonSpeechTokens(bool bSuppressNonSpeechTokens);
+
 private:
 	/** The thread that handles speech recognition */
 	TSharedPtr<FSpeechRecognizerThread> Thread;
