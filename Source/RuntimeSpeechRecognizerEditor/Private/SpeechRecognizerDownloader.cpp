@@ -26,7 +26,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& U
 			return;
 		}
 
-		DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max()/*851068*/, OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
+		DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max(), OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
 		{
 			PromisePtr->SetValue(MoveTemp(ResultData));
 		});
