@@ -37,20 +37,6 @@ struct TIntVector2
 	{
 	}
 
-	const IntType& operator[](int32 ComponentIndex) const
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			return XY[ComponentIndex];
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
-	IntType& operator[](int32 ComponentIndex)
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			return XY[ComponentIndex];
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
 	bool operator==(const TIntVector2& Other) const
 	{
 		return X == Other.X && Y == Other.Y;

@@ -2,6 +2,7 @@
 
 #include "SpeechRecognizerSettings.h"
 #include "SpeechRecognizerDefines.h"
+#include "Misc/Paths.h"
 
 #if WITH_EDITOR
 #include "RuntimeSpeechRecognizerEditor/Public/RuntimeSpeechRecognizerEditor.h"
