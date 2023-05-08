@@ -1,5 +1,7 @@
 // Defines CLOCK_MONOTONIC on Linux
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "ggml.h"
 
