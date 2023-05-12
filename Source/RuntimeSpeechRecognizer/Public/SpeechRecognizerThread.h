@@ -8,6 +8,8 @@
 #include "SampleBuffer.h"
 #include "HAL/Runnable.h"
 #include "HAL/ThreadSafeBool.h"
+#include "Templates/UniquePtr.h"
+#include "Async/Future.h"
 
 #include "SpeechRecognizerThread.generated.h"
 
