@@ -1,5 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Georgy Treshchev 2023.
 
 #include "SpeechRecognizerDownloader.h"
 
@@ -7,6 +6,7 @@
 #include "SpeechRecognizerEditorDefines.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 ULanguageModelDownloader::ULanguageModelDownloader()
 	: bCanceled(false)
@@ -17,8 +17,14 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& U
 {
 	constexpr float Timeout = 5.0f;
 	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	GetLanguageModelSize(URL, Timeout).Next([this, PromisePtr, URL, OnProgress](int64 ContentLength)
+	GetLanguageModelSize(URL, Timeout).Next([WeakThis = MakeWeakObjectPtr(this), PromisePtr, URL, OnProgress](int64 ContentLength)
 	{
+		if (!WeakThis.IsValid())
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model: downloader was destroyed"));
+			PromisePtr->SetValue(TArray64<uint8>());
+		}
+
 		if (ContentLength <= 0)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model: content length is 0"));
@@ -26,7 +32,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& U
 			return;
 		}
 
-		DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max(), OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
+		WeakThis->DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max(), OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
 		{
 			PromisePtr->SetValue(MoveTemp(ResultData));
 		});
@@ -76,8 +82,22 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 	});
 
 	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	HttpRequestRef->OnProcessRequestComplete().BindWeakLambda(this, [this, PromisePtr, URL, LanguageModelSize, MaxChunkSize, InternalContentRange, InternalResultData = MoveTemp(InternalResultData), OnProgress](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
+	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThis = MakeWeakObjectPtr(this), PromisePtr, URL, LanguageModelSize, MaxChunkSize, InternalContentRange, InternalResultData = MoveTemp(InternalResultData), OnProgress](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
 	{
+		if (!WeakThis.IsValid())
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model chunk: downloader was destroyed"));
+			PromisePtr->SetValue(TArray64<uint8>());
+			return;
+		}
+
+		if (!Request.IsValid())
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model chunk: request is invalid"));
+			PromisePtr->SetValue(TArray64<uint8>());
+			return;
+		}
+
 		if (!bSuccess || !Response.IsValid())
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model chunk from %s: request failed"), *Request->GetURL());
@@ -128,7 +148,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 			const FInt64Vector2 NewContentRange = FInt64Vector2(OverallDownloadedSize, OverallDownloadedSize + BytesToDownload - 1);
 
 			// Initiate the next download chunk
-			DownloadFileByChunk(URL, LanguageModelSize, MaxChunkSize, OnProgress, NewContentRange, MoveTemp(InternalResultData)).Next([PromisePtr](TArray64<uint8>&& ResultData)
+			WeakThis->DownloadFileByChunk(URL, LanguageModelSize, MaxChunkSize, OnProgress, NewContentRange, MoveTemp(InternalResultData)).Next([PromisePtr](TArray64<uint8>&& ResultData)
 			{
 				PromisePtr->SetValue(MoveTemp(ResultData));
 			});
@@ -166,7 +186,7 @@ TFuture<int64> ULanguageModelDownloader::GetLanguageModelSize(const FString& URL
 
 	HttpRequestRef->SetTimeout(Timeout);
 
-	HttpRequestRef->OnProcessRequestComplete().BindWeakLambda(this, [PromisePtr](const FHttpRequestPtr& Request, const FHttpResponsePtr& Response, const bool bSucceeded)
+	HttpRequestRef->OnProcessRequestComplete().BindLambda([PromisePtr](const FHttpRequestPtr& Request, const FHttpResponsePtr& Response, const bool bSucceeded)
 	{
 		const int64 ContentLength = FCString::Atoi64(Response.IsValid() ? *Response->GetHeader("Content-Length") : TEXT("0"));
 		if (ContentLength <= 0)
