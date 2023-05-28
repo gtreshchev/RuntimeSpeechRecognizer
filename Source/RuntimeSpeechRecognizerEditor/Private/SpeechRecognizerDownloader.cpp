@@ -6,25 +6,27 @@
 #include "SpeechRecognizerEditorDefines.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
-#include "UObject/WeakObjectPtrTemplates.h"
 
-ULanguageModelDownloader::ULanguageModelDownloader()
+FLanguageModelDownloader::FLanguageModelDownloader()
 	: bCanceled(false)
 {
 }
 
-TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& URL, const TFunction<void(float)>& OnProgress)
+TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFile(const FString& URL, const TFunction<void(float)>& OnProgress)
 {
 	constexpr float Timeout = 5.0f;
 	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	GetLanguageModelSize(URL, Timeout).Next([WeakThis = MakeWeakObjectPtr(this), PromisePtr, URL, OnProgress](int64 ContentLength)
+	TWeakPtr<FLanguageModelDownloader> WeakThisPtr = AsShared();
+	GetLanguageModelSize(URL, Timeout).Next([WeakThisPtr, PromisePtr, URL, OnProgress](int64 ContentLength)
 	{
-		if (!WeakThis.IsValid())
+		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		if (!SharedThis.IsValid())
 		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model: downloader was destroyed"));
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model: downloader has been destroyed"));
 			PromisePtr->SetValue(TArray64<uint8>());
+			return;
 		}
-
+		
 		if (ContentLength <= 0)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model: content length is 0"));
@@ -32,7 +34,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& U
 			return;
 		}
 
-		WeakThis->DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max(), OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
+		SharedThis->DownloadFileByChunk(URL, ContentLength, TNumericLimits<TArray<uint8>::SizeType>::Max(), OnProgress).Next([PromisePtr](TArray64<uint8>&& ResultData)
 		{
 			PromisePtr->SetValue(MoveTemp(ResultData));
 		});
@@ -40,7 +42,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFile(const FString& U
 	return PromisePtr->GetFuture();
 }
 
-TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FString& URL, int64 LanguageModelSize, int64 MaxChunkSize, const TFunction<void(float)>& OnProgress, FInt64Vector2 InternalContentRange, TArray64<uint8>&& InternalResultData)
+TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFileByChunk(const FString& URL, int64 LanguageModelSize, int64 MaxChunkSize, const TFunction<void(float)>& OnProgress, FInt64Vector2 InternalContentRange, TArray64<uint8>&& InternalResultData)
 {
 	// Check if download has been canceled before starting the download
 	if (bCanceled)
@@ -67,6 +69,8 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 		InternalContentRange.Y = FMath::Min(LanguageModelSize, MaxChunkSize) - 1;
 	}
 
+	TWeakPtr<FLanguageModelDownloader> WeakThisPtr = AsShared();
+
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequestRef = FHttpModule::Get().CreateRequest();
 	HttpRequestRef->SetVerb("GET");
 	HttpRequestRef->SetURL(URL);
@@ -74,26 +78,24 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 	const FString RangeHeaderValue = FString::Format(TEXT("bytes={0}-{1}"), {InternalContentRange.X, InternalContentRange.Y});
 	HttpRequestRef->SetHeader(TEXT("Range"), RangeHeaderValue);
 
-	HttpRequestRef->OnRequestProgress().BindWeakLambda(this, [LanguageModelSize, InternalContentRange, OnProgress](FHttpRequestPtr Request, int32 BytesSent, int32 BytesReceived)
+	HttpRequestRef->OnRequestProgress().BindLambda([WeakThisPtr, LanguageModelSize, InternalContentRange, OnProgress](FHttpRequestPtr Request, int32 BytesSent, int32 BytesReceived)
 	{
-		const float Progress = static_cast<float>(InternalContentRange.X + BytesReceived) / LanguageModelSize;
-		UE_LOG(LogEditorRuntimeSpeechRecognizer, Verbose, TEXT("Downloaded %d bytes of language model chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), BytesReceived, *Request->GetURL(), InternalContentRange.X, InternalContentRange.Y, LanguageModelSize, Progress);
-		OnProgress(Progress);
+		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		if (SharedThis.IsValid())
+		{
+			const float Progress = static_cast<float>(InternalContentRange.X + BytesReceived) / LanguageModelSize;
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Verbose, TEXT("Downloaded %d bytes of language model chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), BytesReceived, *Request->GetURL(), InternalContentRange.X, InternalContentRange.Y, LanguageModelSize, Progress);
+			OnProgress(Progress);
+		}
 	});
 
 	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThis = MakeWeakObjectPtr(this), PromisePtr, URL, LanguageModelSize, MaxChunkSize, InternalContentRange, InternalResultData = MoveTemp(InternalResultData), OnProgress](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
+	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThisPtr, PromisePtr, URL, LanguageModelSize, MaxChunkSize, InternalContentRange, InternalResultData = MoveTemp(InternalResultData), OnProgress](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
 	{
-		if (!WeakThis.IsValid())
+		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		if (!SharedThis.IsValid())
 		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model chunk: downloader was destroyed"));
-			PromisePtr->SetValue(TArray64<uint8>());
-			return;
-		}
-
-		if (!Request.IsValid())
-		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model chunk: request is invalid"));
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download language model chunk: downloader has been destroyed"));
 			PromisePtr->SetValue(TArray64<uint8>());
 			return;
 		}
@@ -148,7 +150,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 			const FInt64Vector2 NewContentRange = FInt64Vector2(OverallDownloadedSize, OverallDownloadedSize + BytesToDownload - 1);
 
 			// Initiate the next download chunk
-			WeakThis->DownloadFileByChunk(URL, LanguageModelSize, MaxChunkSize, OnProgress, NewContentRange, MoveTemp(InternalResultData)).Next([PromisePtr](TArray64<uint8>&& ResultData)
+			SharedThis->DownloadFileByChunk(URL, LanguageModelSize, MaxChunkSize, OnProgress, NewContentRange, MoveTemp(InternalResultData)).Next([PromisePtr](TArray64<uint8>&& ResultData)
 			{
 				PromisePtr->SetValue(MoveTemp(ResultData));
 			});
@@ -165,7 +167,7 @@ TFuture<TArray64<uint8>> ULanguageModelDownloader::DownloadFileByChunk(const FSt
 	return PromisePtr->GetFuture();
 }
 
-void ULanguageModelDownloader::CancelDownload()
+void FLanguageModelDownloader::CancelDownload()
 {
 	bCanceled = true;
 	if (HttpRequestPtr.IsValid())
@@ -176,7 +178,7 @@ void ULanguageModelDownloader::CancelDownload()
 	UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Language model download canceled"));
 }
 
-TFuture<int64> ULanguageModelDownloader::GetLanguageModelSize(const FString& URL, float Timeout)
+TFuture<int64> FLanguageModelDownloader::GetLanguageModelSize(const FString& URL, float Timeout)
 {
 	TSharedPtr<TPromise<int64>> PromisePtr = MakeShared<TPromise<int64>>();
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequestRef = FHttpModule::Get().CreateRequest();

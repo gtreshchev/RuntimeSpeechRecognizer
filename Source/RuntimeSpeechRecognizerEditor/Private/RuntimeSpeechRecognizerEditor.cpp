@@ -355,7 +355,7 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeec
 
 	const FString URL = FPaths::Combine(SpeechRecognizerSettings->ModelDownloadBaseUrl, LMFileName);
 
-	LanguageModelDownloadState.Downloader = TStrongObjectPtr<ULanguageModelDownloader>(NewObject<ULanguageModelDownloader>());
+	LanguageModelDownloadState.Downloader = MakeShared<FLanguageModelDownloader>();
 	LanguageModelDownloadState.Promise = MakeUnique<TPromise<bool>>();
 	LanguageModelDownloadState.ProgressValue = MakeUnique<float>(0.0f);
 	LanguageModelDownloadState.ProgressWindow = MakeUnique<FSpeechRecognizerProgressDialog>(LOCTEXT("DownloadLM", "Downloading Language Model"), FText::Format(LOCTEXT("DownloadLMDescription", "Downloading Language Model: {0}"), FText::FromString(LMFileName)),
