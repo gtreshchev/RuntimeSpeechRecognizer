@@ -3,10 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
 #include "Http.h"
 #include "Templates/SharedPointer.h"
-#include "SpeechRecognizerDownloader.generated.h"
 
 #if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 0)
 template <typename InIntType>
@@ -50,23 +48,15 @@ struct TIntVector2
 using FInt64Vector2 = TIntVector2<int64>;
 #endif
 
-/** Delegate for broadcasting the completion of the language model download */
-DECLARE_DELEGATE_OneParam(FOnLanguageModelDownloadComplete, TArray64<uint8>);
-
-/** Delegate for broadcasting the size of the language model file to be downloaded */
-DECLARE_DELEGATE_OneParam(FOnGetLanguageModelSize, int64);
-
 /**
  * A class that handles downloading language model files from URLs
  * This class is designed to handle large files beyond the limit supported by a TArray<uint8> (i.e. more than 2 GB) by using the HTTP Range header to download the file in chunks
  */
-UCLASS()
-class RUNTIMESPEECHRECOGNIZEREDITOR_API ULanguageModelDownloader : public UObject
+class FLanguageModelDownloader : public TSharedFromThis<FLanguageModelDownloader>
 {
-	GENERATED_BODY()
-
 public:
-	ULanguageModelDownloader();
+	FLanguageModelDownloader();
+	virtual ~FLanguageModelDownloader() = default;
 
 	/**
 	 * Download a file from the specified URL

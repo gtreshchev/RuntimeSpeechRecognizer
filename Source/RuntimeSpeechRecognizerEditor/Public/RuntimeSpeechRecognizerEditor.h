@@ -112,7 +112,7 @@ private:
 	struct
 	{
 		/** Pointer to the language model downloader */
-		mutable TStrongObjectPtr<class ULanguageModelDownloader> Downloader;
+		mutable TSharedPtr<class FLanguageModelDownloader> Downloader;
 
 		/** Pointer to a promise that will resolve when the language model finishes downloading */
 		mutable TUniquePtr<TPromise<bool>> Promise;
