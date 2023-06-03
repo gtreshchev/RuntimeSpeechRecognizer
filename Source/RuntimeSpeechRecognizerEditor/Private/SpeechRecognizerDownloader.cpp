@@ -162,7 +162,12 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFileByChunk(const FSt
 		}
 	});
 
-	HttpRequestRef->ProcessRequest();
+	if (!HttpRequestRef->ProcessRequest())
+	{
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download language model chunk from %s: request failed"), *URL);
+		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+	}
+
 	HttpRequestPtr = HttpRequestRef;
 	return PromisePtr->GetFuture();
 }
