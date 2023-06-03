@@ -113,6 +113,7 @@ extern "C" {
     // Frees all allocated memory
     WHISPER_API void whisper_free      (struct whisper_context * ctx);
     WHISPER_API void whisper_free_state(struct whisper_state * state);
+    WHISPER_API void whisper_free_params(struct whisper_full_params * params);
 
     // Convert RAW PCM audio to log mel spectrogram.
     // The resulting spectrogram is stored inside the default state of the provided whisper context.
@@ -258,7 +259,7 @@ extern "C" {
     WHISPER_API int whisper_model_n_text_head  (struct whisper_context * ctx);
     WHISPER_API int whisper_model_n_text_layer (struct whisper_context * ctx);
     WHISPER_API int whisper_model_n_mels       (struct whisper_context * ctx);
-    WHISPER_API int whisper_model_f16          (struct whisper_context * ctx);
+    WHISPER_API int whisper_model_ftype        (struct whisper_context * ctx);
     WHISPER_API int whisper_model_type         (struct whisper_context * ctx);
 
     // Token logits obtained from the last call to whisper_decode()
@@ -365,6 +366,7 @@ extern "C" {
 
         // for auto-detection, set to nullptr, "" or "auto"
         const char * language;
+        bool detect_language;
 
         // common decoding parameters:
         bool suppress_blank;    // ref: https://github.com/openai/whisper/blob/f82bc59f5ea234d4b97fb2860842ed38519f7e65/whisper/decoding.py#L89
@@ -408,6 +410,8 @@ extern "C" {
         void * logits_filter_callback_user_data;
     };
 
+    // NOTE: this function allocates memory, and it is the responsibility of the caller to free the pointer - see whisper_free_params()
+    WHISPER_API struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sampling_strategy strategy);
     WHISPER_API struct whisper_full_params whisper_full_default_params(enum whisper_sampling_strategy strategy);
 
     // Run the entire model: PCM -> log mel spectrogram -> encoder -> decoder -> text
