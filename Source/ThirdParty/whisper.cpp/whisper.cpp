@@ -1,4 +1,3 @@
-#define WHISPER_BUILD
 #include "whisper.h"
 #if WHISPER_USE_COREML
 #include "coreml/whisper-encoder.h"
@@ -140,7 +139,7 @@ static const std::map<std::string, std::pair<int, std::string>> g_lang = {
     { "hi",  { 17,  "hindi",          } },
     { "fi",  { 18,  "finnish",        } },
     { "vi",  { 19,  "vietnamese",     } },
-    { "iw",  { 20,  "hebrew",         } },
+    { "he",  { 20,  "hebrew",         } },
     { "uk",  { 21,  "ukrainian",      } },
     { "el",  { 22,  "greek",          } },
     { "ms",  { 23,  "malay",          } },
@@ -255,12 +254,70 @@ static const std::map<e_model, size_t> MEM_REQ_SCRATCH3 = {
     { MODEL_LARGE,     9ull*MB },
 };
 
-static const std::map<e_model, size_t> MEM_REQ_MODEL = {
-    { MODEL_TINY,     74ull*MB },
-    { MODEL_BASE,    142ull*MB },
-    { MODEL_SMALL,   466ull*MB },
-    { MODEL_MEDIUM, 1464ull*MB },
-    { MODEL_LARGE,  2952ull*MB },
+static const std::map<ggml_type, std::map<e_model, size_t>> MEM_REQ_MODEL = {
+    { GGML_TYPE_F32,
+        {
+            { MODEL_TINY,     74ull*MB },
+            { MODEL_BASE,    142ull*MB },
+            { MODEL_SMALL,   466ull*MB },
+            { MODEL_MEDIUM, 1464ull*MB },
+            { MODEL_LARGE,  2952ull*MB },
+        },
+    },
+    { GGML_TYPE_F16,
+        {
+            { MODEL_TINY,     74ull*MB },
+            { MODEL_BASE,    142ull*MB },
+            { MODEL_SMALL,   466ull*MB },
+            { MODEL_MEDIUM, 1464ull*MB },
+            { MODEL_LARGE,  2952ull*MB },
+        },
+    },
+    { GGML_TYPE_Q4_0,
+        {
+            { MODEL_TINY,     26ull*MB },
+            { MODEL_BASE,     50ull*MB },
+            { MODEL_SMALL,   154ull*MB },
+            { MODEL_MEDIUM,  470ull*MB },
+            { MODEL_LARGE,   940ull*MB },
+        },
+    },
+    { GGML_TYPE_Q4_1,
+        {
+            { MODEL_TINY,     32ull*MB },
+            { MODEL_BASE,     58ull*MB },
+            { MODEL_SMALL,   182ull*MB },
+            { MODEL_MEDIUM,  562ull*MB },
+            { MODEL_LARGE,  1124ull*MB },
+        },
+    },
+    { GGML_TYPE_Q5_0,
+        {
+            { MODEL_TINY,     30ull*MB },
+            { MODEL_BASE,     54ull*MB },
+            { MODEL_SMALL,   170ull*MB },
+            { MODEL_MEDIUM,  516ull*MB },
+            { MODEL_LARGE,  1034ull*MB },
+        },
+    },
+    { GGML_TYPE_Q5_1,
+        {
+            { MODEL_TINY,     32ull*MB },
+            { MODEL_BASE,     58ull*MB },
+            { MODEL_SMALL,   182ull*MB },
+            { MODEL_MEDIUM,  562ull*MB },
+            { MODEL_LARGE,  1124ull*MB },
+        },
+    },
+    { GGML_TYPE_Q8_0,
+        {
+            { MODEL_TINY,     45ull*MB },
+            { MODEL_BASE,     84ull*MB },
+            { MODEL_SMALL,   268ull*MB },
+            { MODEL_MEDIUM,  834ull*MB },
+            { MODEL_LARGE,  1674ull*MB },
+        },
+    },
 };
 
 static const std::map<e_model, size_t> MEM_REQ_KV_SELF = {
@@ -370,7 +427,7 @@ struct whisper_hparams {
     int32_t n_text_head   = 6;
     int32_t n_text_layer  = 4;
     int32_t n_mels        = 80;
-    int32_t f16           = 1;
+    int32_t ftype         = 1;
 };
 
 // audio encoding layer
@@ -637,10 +694,11 @@ struct whisper_state {
 };
 
 struct whisper_context {
-    int64_t t_load_us = 0;
+    int64_t t_load_us  = 0;
     int64_t t_start_us = 0;
 
-    ggml_type wtype = ggml_type::GGML_TYPE_F16; // weight type (FP32 or FP16)
+    ggml_type wtype = ggml_type::GGML_TYPE_F16; // weight type (FP32 / FP16 / QX)
+    ggml_type itype = ggml_type::GGML_TYPE_F16; // intermediate type (FP32 or FP16)
 
     whisper_model model;
     whisper_vocab vocab;
@@ -697,7 +755,7 @@ static bool kv_cache_reinit(struct whisper_kv_cache & cache) {
     const ggml_type wtype = cache.k->type;
     WHISPER_ASSERT(wtype == cache.v->type);
 
-    WHISPER_ASSERT(cache.buf.size() >= 2*n_elements*ggml_type_size(wtype));
+    WHISPER_ASSERT(cache.buf.size() >= 2*n_elements*ggml_type_sizef(wtype));
 
     struct ggml_init_params params = {
         /*.mem_size   =*/ cache.buf.size(),
@@ -770,7 +828,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         read_safe(loader, hparams.n_text_head);
         read_safe(loader, hparams.n_text_layer);
         read_safe(loader, hparams.n_mels);
-        read_safe(loader, hparams.f16);
+        read_safe(loader, hparams.ftype);
 
         assert(hparams.n_text_state == hparams.n_audio_state);
 
@@ -794,11 +852,19 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             model.type = e_model::MODEL_LARGE;
         }
 
-        // for the big tensors, we have the option to store the data in 16-bit floats
-        // in order to save memory and also to speed up the computation
-        wctx.wtype = model.hparams.f16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        const int32_t qntvr = hparams.ftype / GGML_QNT_VERSION_FACTOR;
 
-        const size_t scale = model.hparams.f16 ? 1 : 2;
+        hparams.ftype %= GGML_QNT_VERSION_FACTOR;
+
+        // for the big tensors, we have the option to store the data in 16-bit floats or quantized
+        // in order to save memory and also to speed up the computation
+        wctx.wtype = ggml_ftype_to_ggml_type((ggml_ftype) (model.hparams.ftype));
+        if (wctx.wtype == GGML_TYPE_COUNT) {
+            fprintf(stderr, "%s: invalid model (bad ftype value %d)\n", __func__, model.hparams.ftype);
+            return false;
+        }
+
+        const size_t scale = model.hparams.ftype ? 1 : 2;
 
         fprintf(stderr, "%s: n_vocab       = %d\n", __func__, hparams.n_vocab);
         fprintf(stderr, "%s: n_audio_ctx   = %d\n", __func__, hparams.n_audio_ctx);
@@ -810,18 +876,19 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         fprintf(stderr, "%s: n_text_head   = %d\n", __func__, hparams.n_text_head);
         fprintf(stderr, "%s: n_text_layer  = %d\n", __func__, hparams.n_text_layer);
         fprintf(stderr, "%s: n_mels        = %d\n", __func__, hparams.n_mels);
-        fprintf(stderr, "%s: f16           = %d\n", __func__, hparams.f16);
+        fprintf(stderr, "%s: ftype         = %d\n", __func__, model.hparams.ftype);
+        fprintf(stderr, "%s: qntvr         = %d\n", __func__, qntvr);
         fprintf(stderr, "%s: type          = %d\n", __func__, model.type);
 
         // print memory requirements
         {
             // this is the total memory required to run the inference
             const size_t mem_required =
-                     MEM_REQ_SCRATCH0.at (model.type) +
-                     MEM_REQ_SCRATCH1.at (model.type) +
-                     MEM_REQ_SCRATCH2.at (model.type) +
-                     MEM_REQ_SCRATCH3.at (model.type) +
-                scale*MEM_REQ_MODEL.at   (model.type) +
+                     MEM_REQ_SCRATCH0.at(model.type) +
+                     MEM_REQ_SCRATCH1.at(model.type) +
+                     MEM_REQ_SCRATCH2.at(model.type) +
+                     MEM_REQ_SCRATCH3.at(model.type) +
+                scale*MEM_REQ_MODEL.at(wctx.wtype).at(model.type) +
                 scale*MEM_REQ_KV_CROSS.at(model.type) +
                 scale*std::max(MEM_REQ_ENCODE.at(model.type), MEM_REQ_DECODE.at(model.type));
 
@@ -837,7 +904,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         // always have at least one decoder
 
         wctx.model.buf = new std::vector<uint8_t>();
-        wctx.model.buf->resize(scale*MEM_REQ_MODEL.at(model.type));
+        wctx.model.buf->resize(scale*MEM_REQ_MODEL.at(wctx.wtype).at(model.type));
 
         // we skip initialization of the state until it is needed
         // because it might be that state will always be provided externally.
@@ -928,6 +995,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
     size_t ctx_size = 0;
 
     const ggml_type wtype = wctx.wtype;
+    const ggml_type vtype = wctx.wtype == GGML_TYPE_F32 ? GGML_TYPE_F32 : GGML_TYPE_F16; // conv type
 
     {
         const auto & hparams = model.hparams;
@@ -946,95 +1014,95 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
 
         // encoder
         {
-            ctx_size += n_audio_ctx*n_audio_state*ggml_type_size(GGML_TYPE_F32); // e_pe;
+            ctx_size += n_audio_ctx*n_audio_state*ggml_type_sizef(GGML_TYPE_F32); // e_pe;
 
-            ctx_size += 3*n_mels*n_audio_state*ggml_type_size(wtype);         // e_conv_1_w
-            ctx_size +=          n_audio_state*ggml_type_size(GGML_TYPE_F32); // e_conv_1_b
+            ctx_size += 3*n_mels*n_audio_state*ggml_type_sizef(vtype);         // e_conv_1_w
+            ctx_size +=          n_audio_state*ggml_type_sizef(GGML_TYPE_F32); // e_conv_1_b
 
-            ctx_size += 3*n_audio_state*n_audio_state*ggml_type_size(wtype);         // e_conv_2_w
-            ctx_size +=                 n_audio_state*ggml_type_size(GGML_TYPE_F32); // e_conv_2_b
+            ctx_size += 3*n_audio_state*n_audio_state*ggml_type_sizef(vtype);         // e_conv_2_w
+            ctx_size +=                 n_audio_state*ggml_type_sizef(GGML_TYPE_F32); // e_conv_2_b
 
-            ctx_size += n_audio_state*ggml_type_size(GGML_TYPE_F32); // e_ln_w;
-            ctx_size += n_audio_state*ggml_type_size(GGML_TYPE_F32); // e_ln_b;
+            ctx_size += n_audio_state*ggml_type_sizef(GGML_TYPE_F32); // e_ln_w;
+            ctx_size += n_audio_state*ggml_type_sizef(GGML_TYPE_F32); // e_ln_b;
         }
 
         // decoder
         {
-            ctx_size += n_text_ctx*n_text_state*ggml_type_size(GGML_TYPE_F32); // d_pe;
+            ctx_size += n_text_ctx*n_text_state*ggml_type_sizef(GGML_TYPE_F32); // d_pe;
 
-            ctx_size += n_vocab*n_text_state*ggml_type_size(wtype); // d_te;
+            ctx_size += n_vocab*n_text_state*ggml_type_sizef(wtype); // d_te;
 
-            ctx_size += n_text_state*ggml_type_size(GGML_TYPE_F32); // d_ln_w;
-            ctx_size += n_text_state*ggml_type_size(GGML_TYPE_F32); // d_ln_b;
+            ctx_size += n_text_state*ggml_type_sizef(GGML_TYPE_F32); // d_ln_w;
+            ctx_size += n_text_state*ggml_type_sizef(GGML_TYPE_F32); // d_ln_b;
         }
 
         // encoder layers
         {
-            ctx_size += n_audio_layer*(n_audio_state*ggml_type_size(GGML_TYPE_F32)); // mlp_ln_w
-            ctx_size += n_audio_layer*(n_audio_state*ggml_type_size(GGML_TYPE_F32)); // mlp_ln_b
+            ctx_size += n_audio_layer*(n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_ln_w
+            ctx_size += n_audio_layer*(n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_ln_b
 
-            ctx_size += n_audio_layer*(4*n_audio_state*n_audio_state*ggml_type_size(wtype));         // mlp_0_w
-            ctx_size += n_audio_layer*(              4*n_audio_state*ggml_type_size(GGML_TYPE_F32)); // mlp_0_b
+            ctx_size += n_audio_layer*(4*n_audio_state*n_audio_state*ggml_type_sizef(wtype));         // mlp_0_w
+            ctx_size += n_audio_layer*(              4*n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_0_b
 
-            ctx_size += n_audio_layer*(4*n_audio_state*n_audio_state*ggml_type_size(wtype));         // mlp_1_w
-            ctx_size += n_audio_layer*(                n_audio_state*ggml_type_size(GGML_TYPE_F32)); // mlp_1_b
+            ctx_size += n_audio_layer*(4*n_audio_state*n_audio_state*ggml_type_sizef(wtype));         // mlp_1_w
+            ctx_size += n_audio_layer*(                n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_1_b
 
-            ctx_size += n_audio_layer*(n_audio_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_0_w
-            ctx_size += n_audio_layer*(n_audio_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_0_b
+            ctx_size += n_audio_layer*(n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_0_w
+            ctx_size += n_audio_layer*(n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_0_b
 
-            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_size(wtype));         // attn_q_w
-            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_size(GGML_TYPE_F32)); // attn_q_b
+            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_sizef(wtype));         // attn_q_w
+            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_q_b
 
-            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_size(wtype)); // attn_k_w
+            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_sizef(wtype)); // attn_k_w
 
-            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_size(wtype));         // attn_v_w
-            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_size(GGML_TYPE_F32)); // attn_v_b
+            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_sizef(wtype));         // attn_v_w
+            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_v_b
 
-            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_size(wtype));         // attn_ln_1_w
-            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_1_b
+            ctx_size += n_audio_layer*(n_audio_state*n_audio_state*ggml_type_sizef(wtype));         // attn_ln_1_w
+            ctx_size += n_audio_layer*(              n_audio_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_1_b
         }
 
         // decoder layers
         {
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // mlp_ln_w
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // mlp_ln_b
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_ln_w
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_ln_b
 
-            ctx_size += n_text_layer*(4*n_text_state*n_text_state*ggml_type_size(wtype));         // mlp_0_w
-            ctx_size += n_text_layer*(             4*n_text_state*ggml_type_size(GGML_TYPE_F32)); // mlp_0_b
+            ctx_size += n_text_layer*(4*n_text_state*n_text_state*ggml_type_sizef(wtype));         // mlp_0_w
+            ctx_size += n_text_layer*(             4*n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_0_b
 
-            ctx_size += n_text_layer*(4*n_text_state*n_text_state*ggml_type_size(wtype));         // mlp_1_w
-            ctx_size += n_text_layer*(               n_text_state*ggml_type_size(GGML_TYPE_F32)); // mlp_1_b
+            ctx_size += n_text_layer*(4*n_text_state*n_text_state*ggml_type_sizef(wtype));         // mlp_1_w
+            ctx_size += n_text_layer*(               n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // mlp_1_b
 
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_0_w
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_0_b
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_0_w
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_0_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // attn_q_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // attn_q_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // attn_q_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_q_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype)); // attn_k_w
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype)); // attn_k_w
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // attn_v_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // attn_v_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // attn_v_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_v_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // attn_ln_1_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // attn_ln_1_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // attn_ln_1_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // attn_ln_1_b
                                                                                                 //
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // cross_attn_ln_0_w
-            ctx_size += n_text_layer*(n_text_state*ggml_type_size(GGML_TYPE_F32)); // cross_attn_ln_0_b
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // cross_attn_ln_0_w
+            ctx_size += n_text_layer*(n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // cross_attn_ln_0_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // cross_attn_q_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // cross_attn_q_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // cross_attn_q_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // cross_attn_q_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype)); // cross_attn_k_w
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype)); // cross_attn_k_w
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // cross_attn_v_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // cross_attn_v_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // cross_attn_v_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // cross_attn_v_b
 
-            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_size(wtype));         // cross_attn_ln_1_w
-            ctx_size += n_text_layer*(             n_text_state*ggml_type_size(GGML_TYPE_F32)); // cross_attn_ln_1_b
+            ctx_size += n_text_layer*(n_text_state*n_text_state*ggml_type_sizef(wtype));         // cross_attn_ln_1_w
+            ctx_size += n_text_layer*(             n_text_state*ggml_type_sizef(GGML_TYPE_F32)); // cross_attn_ln_1_b
         }
 
-        ctx_size += (15 + 15*n_audio_layer + 24*n_text_layer)*256; // object overhead
+        ctx_size += (15 + 15*n_audio_layer + 24*n_text_layer)*512; // object overhead
 
         fprintf(stderr, "%s: model ctx     = %7.2f MB\n", __func__, ctx_size/(1024.0*1024.0));
     }
@@ -1077,175 +1145,175 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
 
         // encoder
         {
-            model.e_pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_audio_state, n_audio_ctx);
+            model.e_pe       = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_audio_state, n_audio_ctx);
 
-            model.e_conv_1_w = ggml_new_tensor_3d(ctx, wtype,         3, n_mels, n_audio_state);
+            model.e_conv_1_w = ggml_new_tensor_3d(ctx, vtype,         3, n_mels, n_audio_state);
             model.e_conv_1_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_audio_state);
 
-            model.e_conv_2_w = ggml_new_tensor_3d(ctx, wtype,         3, n_audio_state, n_audio_state);
+            model.e_conv_2_w = ggml_new_tensor_3d(ctx, vtype,         3, n_audio_state, n_audio_state);
             model.e_conv_2_b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_audio_state);
 
-            model.e_ln_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
-            model.e_ln_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+            model.e_ln_w     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+            model.e_ln_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
 
             // map by name
             model.tensors["encoder.positional_embedding"] = model.e_pe;
 
-            model.tensors["encoder.conv1.weight"] = model.e_conv_1_w;
-            model.tensors["encoder.conv1.bias"]   = model.e_conv_1_b;
+            model.tensors["encoder.conv1.weight"]         = model.e_conv_1_w;
+            model.tensors["encoder.conv1.bias"]           = model.e_conv_1_b;
 
-            model.tensors["encoder.conv2.weight"] = model.e_conv_2_w;
-            model.tensors["encoder.conv2.bias"]   = model.e_conv_2_b;
+            model.tensors["encoder.conv2.weight"]         = model.e_conv_2_w;
+            model.tensors["encoder.conv2.bias"]           = model.e_conv_2_b;
 
-            model.tensors["encoder.ln_post.weight"] = model.e_ln_w;
-            model.tensors["encoder.ln_post.bias"]   = model.e_ln_b;
+            model.tensors["encoder.ln_post.weight"]       = model.e_ln_w;
+            model.tensors["encoder.ln_post.bias"]         = model.e_ln_b;
 
             for (int i = 0; i < n_audio_layer; ++i) {
                 auto & layer = model.layers_encoder[i];
 
-                layer.mlp_ln_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
-                layer.mlp_ln_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+                layer.mlp_ln_w    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
+                layer.mlp_ln_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
-                layer.mlp_0_w = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, 4*n_audio_state);
-                layer.mlp_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*n_audio_state);
+                layer.mlp_0_w     = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, 4*n_audio_state);
+                layer.mlp_0_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*n_audio_state);
 
-                layer.mlp_1_w = ggml_new_tensor_2d(ctx, wtype,         4*n_audio_state, n_audio_state);
-                layer.mlp_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
+                layer.mlp_1_w     = ggml_new_tensor_2d(ctx, wtype,         4*n_audio_state, n_audio_state);
+                layer.mlp_1_b     = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
-                layer.attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
-                layer.attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+                layer.attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
+                layer.attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
-                layer.attn_q_w = ggml_new_tensor_2d(ctx, wtype,         n_audio_state, n_audio_state);
-                layer.attn_q_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+                layer.attn_q_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
+                layer.attn_q_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
-                layer.attn_k_w = ggml_new_tensor_2d(ctx, wtype,         n_audio_state, n_audio_state);
+                layer.attn_k_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
 
-                layer.attn_v_w = ggml_new_tensor_2d(ctx, wtype,         n_audio_state, n_audio_state);
-                layer.attn_v_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+                layer.attn_v_w    = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
+                layer.attn_v_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
-                layer.attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,         n_audio_state, n_audio_state);
-                layer.attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_audio_state);
+                layer.attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,           n_audio_state, n_audio_state);
+                layer.attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_audio_state);
 
                 // map by name
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.weight"] = layer.mlp_ln_w;
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.bias"]   = layer.mlp_ln_b;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.weight"]     = layer.mlp_ln_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp_ln.bias"]       = layer.mlp_ln_b;
 
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.weight"] = layer.mlp_0_w;
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.bias"]   = layer.mlp_0_b;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.weight"]      = layer.mlp_0_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.0.bias"]        = layer.mlp_0_b;
 
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.weight"] = layer.mlp_1_w;
-                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.bias"]   = layer.mlp_1_b;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.weight"]      = layer.mlp_1_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".mlp.2.bias"]        = layer.mlp_1_b;
 
-                model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.weight"] = layer.attn_ln_0_w;
-                model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.bias"]   = layer.attn_ln_0_b;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.weight"]    = layer.attn_ln_0_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".attn_ln.bias"]      = layer.attn_ln_0_b;
 
                 model.tensors["encoder.blocks." + std::to_string(i) + ".attn.query.weight"] = layer.attn_q_w;
                 model.tensors["encoder.blocks." + std::to_string(i) + ".attn.query.bias"]   = layer.attn_q_b;
 
-                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.key.weight"] = layer.attn_k_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.key.weight"]   = layer.attn_k_w;
 
                 model.tensors["encoder.blocks." + std::to_string(i) + ".attn.value.weight"] = layer.attn_v_w;
                 model.tensors["encoder.blocks." + std::to_string(i) + ".attn.value.bias"]   = layer.attn_v_b;
 
-                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.weight"] = layer.attn_ln_1_w;
-                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.bias"]   = layer.attn_ln_1_b;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.weight"]   = layer.attn_ln_1_w;
+                model.tensors["encoder.blocks." + std::to_string(i) + ".attn.out.bias"]     = layer.attn_ln_1_b;
             }
         }
 
         // decoder
         {
-            model.d_pe = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_text_state, n_text_ctx);
+            model.d_pe   = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_text_state, n_text_ctx);
 
-            model.d_te = ggml_new_tensor_2d(ctx, wtype, n_text_state, n_vocab);
+            model.d_te   = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_vocab);
 
             model.d_ln_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
             model.d_ln_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
 
             // map by name
-            model.tensors["decoder.positional_embedding"] = model.d_pe;
+            model.tensors["decoder.positional_embedding"]   = model.d_pe;
 
             model.tensors["decoder.token_embedding.weight"] = model.d_te;
 
-            model.tensors["decoder.ln.weight"] = model.d_ln_w;
-            model.tensors["decoder.ln.bias"]   = model.d_ln_b;
+            model.tensors["decoder.ln.weight"]              = model.d_ln_w;
+            model.tensors["decoder.ln.bias"]                = model.d_ln_b;
 
             for (int i = 0; i < n_text_layer; ++i) {
                 auto & layer = model.layers_decoder[i];
 
-                layer.mlp_ln_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
-                layer.mlp_ln_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.mlp_ln_w          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
+                layer.mlp_ln_b          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.mlp_0_w = ggml_new_tensor_2d(ctx, wtype,           n_text_state, 4*n_text_state);
-                layer.mlp_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*n_text_state);
+                layer.mlp_0_w           = ggml_new_tensor_2d(ctx, wtype,           n_text_state, 4*n_text_state);
+                layer.mlp_0_b           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4*n_text_state);
 
-                layer.mlp_1_w = ggml_new_tensor_2d(ctx, wtype,         4*n_text_state, n_text_state);
-                layer.mlp_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
+                layer.mlp_1_w           = ggml_new_tensor_2d(ctx, wtype,         4*n_text_state, n_text_state);
+                layer.mlp_1_b           = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
-                layer.attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.attn_ln_0_w       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
+                layer.attn_ln_0_b       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.attn_q_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.attn_q_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.attn_q_w          = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.attn_q_b          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.attn_k_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
+                layer.attn_k_w          = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
 
-                layer.attn_v_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.attn_v_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.attn_v_w          = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.attn_v_b          = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.attn_ln_1_w       = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.attn_ln_1_b       = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.cross_attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
-                layer.cross_attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.cross_attn_ln_0_w = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
+                layer.cross_attn_ln_0_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.cross_attn_q_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.cross_attn_q_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.cross_attn_q_w    = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.cross_attn_q_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.cross_attn_k_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
+                layer.cross_attn_k_w    = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
 
-                layer.cross_attn_v_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.cross_attn_v_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.cross_attn_v_w    = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.cross_attn_v_b    = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
-                layer.cross_attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,         n_text_state, n_text_state);
-                layer.cross_attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n_text_state);
+                layer.cross_attn_ln_1_w = ggml_new_tensor_2d(ctx, wtype,           n_text_state, n_text_state);
+                layer.cross_attn_ln_1_b = ggml_new_tensor_1d(ctx, GGML_TYPE_F32,   n_text_state);
 
                 // map by name
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp_ln.weight"] = layer.mlp_ln_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp_ln.bias"]   = layer.mlp_ln_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp_ln.weight"]           = layer.mlp_ln_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp_ln.bias"]             = layer.mlp_ln_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.0.weight"] = layer.mlp_0_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.0.bias"]   = layer.mlp_0_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.0.weight"]            = layer.mlp_0_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.0.bias"]              = layer.mlp_0_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.2.weight"] = layer.mlp_1_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.2.bias"]   = layer.mlp_1_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.2.weight"]            = layer.mlp_1_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".mlp.2.bias"]              = layer.mlp_1_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn_ln.weight"] = layer.attn_ln_0_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn_ln.bias"]   = layer.attn_ln_0_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn_ln.weight"]          = layer.attn_ln_0_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn_ln.bias"]            = layer.attn_ln_0_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.query.weight"] = layer.attn_q_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.query.bias"]   = layer.attn_q_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.query.weight"]       = layer.attn_q_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.query.bias"]         = layer.attn_q_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.key.weight"] = layer.attn_k_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.key.weight"]         = layer.attn_k_w;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.value.weight"] = layer.attn_v_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.value.bias"]   = layer.attn_v_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.value.weight"]       = layer.attn_v_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.value.bias"]         = layer.attn_v_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.out.weight"] = layer.attn_ln_1_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.out.bias"]   = layer.attn_ln_1_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.out.weight"]         = layer.attn_ln_1_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".attn.out.bias"]           = layer.attn_ln_1_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn_ln.weight"] = layer.cross_attn_ln_0_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn_ln.bias"]   = layer.cross_attn_ln_0_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn_ln.weight"]    = layer.cross_attn_ln_0_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn_ln.bias"]      = layer.cross_attn_ln_0_b;
 
                 model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.query.weight"] = layer.cross_attn_q_w;
                 model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.query.bias"]   = layer.cross_attn_q_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.key.weight"] = layer.cross_attn_k_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.key.weight"]   = layer.cross_attn_k_w;
 
                 model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.value.weight"] = layer.cross_attn_v_w;
                 model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.value.bias"]   = layer.cross_attn_v_b;
 
-                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.out.weight"] = layer.cross_attn_ln_1_w;
-                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.out.bias"]   = layer.cross_attn_ln_1_b;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.out.weight"]   = layer.cross_attn_ln_1_w;
+                model.tensors["decoder.blocks." + std::to_string(i) + ".cross_attn.out.bias"]     = layer.cross_attn_ln_1_b;
             }
         }
     }
@@ -1259,18 +1327,18 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         while (true) {
             int32_t n_dims;
             int32_t length;
-            int32_t ftype;
+            int32_t ttype;
 
             read_safe(loader, n_dims);
             read_safe(loader, length);
-            read_safe(loader, ftype);
+            read_safe(loader, ttype);
 
             if (loader->eof(loader->context)) {
                 break;
             }
 
             int32_t nelements = 1;
-            int32_t ne[3] = { 1, 1, 1 };
+            int32_t ne[4] = { 1, 1, 1, 1 };
             for (int i = 0; i < n_dims; ++i) {
                 read_safe(loader, ne[i]);
                 nelements *= ne[i];
@@ -1289,6 +1357,8 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             auto tensor = model.tensors[name.data()];
             if (ggml_nelements(tensor) != nelements) {
                 fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
+                fprintf(stderr, "%s: shape: [%d, %d, %d], expected: [%d, %d, %d]\n",
+                        __func__, ne[0], ne[1], ne[2], (int) tensor->ne[0], (int) tensor->ne[1], (int) tensor->ne[2]);
                 return false;
             }
 
@@ -1298,9 +1368,9 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
                 return false;
             }
 
-            const size_t bpe = (ftype == 0) ? sizeof(float) : sizeof(ggml_fp16_t);
+            const size_t bpe = ggml_type_size(ggml_type(ttype));
 
-            if (nelements*bpe != ggml_nbytes(tensor)) {
+            if ((nelements*bpe)/ggml_blck_size(tensor->type) != ggml_nbytes(tensor)) {
                 fprintf(stderr, "%s: tensor '%s' has wrong size in model file: got %zu, expected %zu\n",
                         __func__, name.data(), ggml_nbytes(tensor), nelements*bpe);
                 return false;
@@ -1309,7 +1379,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             loader->read(loader->context, tensor->data, ggml_nbytes(tensor));
             BYTESWAP_TENSOR(tensor);
 
-            //printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+            //printf("%48s - [%5d, %5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ne[2], ggml_type_name((ggml_type) ttype), ggml_nbytes(tensor)/1024.0/1024.0);
             total_size += ggml_nbytes(tensor);
             model.n_loaded++;
         }
@@ -1480,14 +1550,14 @@ static bool whisper_encode_internal(
                             Qcur),
                         Qcur);
 
-                //Qcur = ggml_scale(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
+                //Qcur = ggml_scale_inplace(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
 
                 // note: no bias for Key
                 struct ggml_tensor * Kcur = ggml_mul_mat(ctx0,
                         layer.attn_k_w,
                         cur);
 
-                //Kcur = ggml_scale(ctx0, Kcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
+                //Kcur = ggml_scale_inplace(ctx0, Kcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
 
                 struct ggml_tensor * Vcur = ggml_mul_mat(ctx0,
                         layer.attn_v_w,
@@ -1508,14 +1578,14 @@ static bool whisper_encode_internal(
                     ggml_permute(ctx0,
                             ggml_cpy(ctx0,
                                 Qcur,
-                                ggml_new_tensor_3d(ctx0, wctx.wtype, n_state/n_head, n_head, n_ctx)),
+                                ggml_new_tensor_3d(ctx0, wctx.itype, n_state/n_head, n_head, n_ctx)),
                             0, 2, 1, 3);
 
                 struct ggml_tensor * K =
                     ggml_permute(ctx0,
                             ggml_cpy(ctx0,
                                 Kcur,
-                                ggml_new_tensor_3d(ctx0, wctx.wtype, n_state/n_head, n_head, n_ctx)),
+                                ggml_new_tensor_3d(ctx0, wctx.itype, n_state/n_head, n_head, n_ctx)),
                             0, 2, 1, 3);
 
                 struct ggml_tensor * V =
@@ -1525,7 +1595,7 @@ static bool whisper_encode_internal(
                                     Vcur,
                                     n_state/n_head, n_head, n_ctx),
                                 1, 2, 0, 3),
-                            ggml_new_tensor_3d(ctx0, wctx.wtype, n_ctx, n_state/n_head, n_head));
+                            ggml_new_tensor_3d(ctx0, wctx.itype, n_ctx, n_state/n_head, n_head));
 
                 struct ggml_tensor * KQV = ggml_flash_attn(ctx0, Q, K, V, false);
 #else
@@ -1540,19 +1610,19 @@ static bool whisper_encode_internal(
                     ggml_permute(ctx0,
                             ggml_cpy(ctx0,
                                 Kcur,
-                                ggml_new_tensor_3d(ctx0, wctx.wtype, n_state/n_head, n_head, n_ctx)),
+                                ggml_new_tensor_3d(ctx0, wctx.itype, n_state/n_head, n_head, n_ctx)),
                             0, 2, 1, 3);
 
                 // K * Q
                 struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
 
                 struct ggml_tensor * KQ_scaled =
-                    ggml_scale(ctx0,
+                    ggml_scale_inplace(ctx0,
                             KQ,
                             ggml_new_f32(ctx0, 1.0f/sqrt(float(n_state)/n_head))
                             );
 
-                struct ggml_tensor * KQ_soft_max = ggml_soft_max(ctx0, KQ_scaled);
+                struct ggml_tensor * KQ_soft_max = ggml_soft_max_inplace(ctx0, KQ_scaled);
 
                 struct ggml_tensor * V =
                     ggml_cpy(ctx0,
@@ -1561,7 +1631,7 @@ static bool whisper_encode_internal(
                                     Vcur,
                                     n_state/n_head, n_head, n_ctx),
                                 1, 2, 0, 3),
-                            ggml_new_tensor_3d(ctx0, wctx.wtype, n_ctx, n_state/n_head, n_head)
+                            ggml_new_tensor_3d(ctx0, wctx.itype, n_ctx, n_state/n_head, n_head)
                             );
 
                 struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ_soft_max);
@@ -1619,7 +1689,7 @@ static bool whisper_encode_internal(
                 wstate.use_buf(ctx0, 0);
 
                 cur = ggml_flash_ff(ctx0,
-                        ggml_cpy(ctx0, cur, ggml_new_tensor_2d(ctx0, wstate.wtype, n_state, n_ctx)),
+                        ggml_cpy(ctx0, cur, ggml_new_tensor_2d(ctx0, wstate.itype, n_state, n_ctx)),
                         layer.mlp_0_w, layer.mlp_0_b, layer.mlp_1_w, layer.mlp_1_b);
 #else
                 wstate.use_buf(ctx0, 0);
@@ -1735,7 +1805,7 @@ static bool whisper_encode_internal(
                 layer.cross_attn_k_w,
                 cur);
 
-            Kcross = ggml_scale(ctx0, Kcross, ggml_new_f32(ctx0, pow(float(n_state) / n_head, -0.25)));
+            Kcross = ggml_scale_inplace(ctx0, Kcross, ggml_new_f32(ctx0, pow(float(n_state) / n_head, -0.25)));
 
             wstate.use_buf(ctx0, 1);
 
@@ -1882,14 +1952,14 @@ static bool whisper_decode_internal(
                         Qcur),
                     Qcur);
 
-            Qcur = ggml_scale(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
+            Qcur = ggml_scale_inplace(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
 
             // note: no bias for Key
             struct ggml_tensor * Kcur = ggml_mul_mat(ctx0,
                     layer.attn_k_w,
                     cur);
 
-            Kcur = ggml_scale(ctx0, Kcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
+            Kcur = ggml_scale_inplace(ctx0, Kcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
 
             // store key and value to memory
             {
@@ -1938,14 +2008,14 @@ static bool whisper_decode_internal(
             struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
 
             //struct ggml_tensor * KQ_scaled =
-            //    ggml_scale(ctx0,
+            //    ggml_scale_inplace(ctx0,
             //            KQ,
             //            ggml_new_f32(ctx0, 1.0f/sqrt(float(n_state)/n_head))
             //            );
 
-            struct ggml_tensor * KQ_masked = ggml_diag_mask_inf(ctx0, KQ, n_past);
+            struct ggml_tensor * KQ_masked = ggml_diag_mask_inf_inplace(ctx0, KQ, n_past);
 
-            struct ggml_tensor * KQ_soft_max = ggml_soft_max(ctx0, KQ_masked);
+            struct ggml_tensor * KQ_soft_max = ggml_soft_max_inplace(ctx0, KQ_masked);
 
             struct ggml_tensor * V =
                 ggml_view_3d(ctx0, kv_self.v,
@@ -2009,7 +2079,7 @@ static bool whisper_decode_internal(
                         Qcur),
                     Qcur);
 
-            Qcur = ggml_scale(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
+            Qcur = ggml_scale_inplace(ctx0, Qcur, ggml_new_f32(ctx0, pow(float(n_state)/n_head, -0.25)));
 
             // Kcross is already scaled
             struct ggml_tensor * Kcross =
@@ -2049,15 +2119,15 @@ static bool whisper_decode_internal(
             struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
 
             //struct ggml_tensor * KQ_scaled =
-            //    ggml_scale(ctx0,
+            //    ggml_scale_inplace(ctx0,
             //            KQ,
             //            ggml_new_f32(ctx0, 1.0f/sqrt(float(n_state)/n_head))
             //            );
 
             // no masking for cross-attention
-            //struct ggml_tensor * KQ_masked = ggml_diag_mask_inf(ctx0, KQ_scaled, n_past);
+            //struct ggml_tensor * KQ_masked = ggml_diag_mask_inf_inplace(ctx0, KQ_scaled, n_past);
 
-            struct ggml_tensor * KQ_soft_max = ggml_soft_max(ctx0, KQ);
+            struct ggml_tensor * KQ_soft_max = ggml_soft_max_inplace(ctx0, KQ);
 
             struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ_soft_max);
 
@@ -2528,6 +2598,15 @@ static std::string whisper_get_coreml_path_encoder(std::string path_bin) {
         path_bin = path_bin.substr(0, pos);
     }
 
+    // match "-qx_x"
+    pos = path_bin.rfind('-');
+    if (pos != std::string::npos) {
+        auto sub = path_bin.substr(pos);
+        if (sub.size() == 5 && sub[1] == 'q' && sub[3] == '_') {
+            path_bin = path_bin.substr(0, pos);
+        }
+    }
+
     path_bin += "-encoder.mlmodelc";
 
     return path_bin;
@@ -2537,9 +2616,9 @@ static std::string whisper_get_coreml_path_encoder(std::string path_bin) {
 struct whisper_state * whisper_init_state(whisper_context * ctx) {
     whisper_state * state = new whisper_state;
 
-    const size_t scale = ctx->model.hparams.f16 ? 1 : 2;
+    const size_t scale = ctx->model.hparams.ftype ? 1 : 2;
 
-    if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_SELF.at(ctx->model.type), state->decoders[0].kv_self, ctx->wtype, ctx->model.hparams.n_text_ctx)) {
+    if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_SELF.at(ctx->model.type), state->decoders[0].kv_self, ctx->itype, ctx->model.hparams.n_text_ctx)) {
         fprintf(stderr, "%s: kv_cache_init() failed for self-attention cache\n", __func__);
         delete state;
         return nullptr;
@@ -2550,7 +2629,7 @@ struct whisper_state * whisper_init_state(whisper_context * ctx) {
         fprintf(stderr, "%s: kv self size  = %7.2f MB\n", __func__, memory_size / 1024.0 / 1024.0);
     }
 
-    if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_CROSS.at(ctx->model.type), state->kv_cross, ctx->wtype, ctx->model.hparams.n_audio_ctx)) {
+    if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_CROSS.at(ctx->model.type), state->kv_cross, ctx->itype, ctx->model.hparams.n_audio_ctx)) {
         fprintf(stderr, "%s: kv_cache_init() failed for cross-attention cache\n", __func__);
         delete state;
         return nullptr;
@@ -2770,6 +2849,12 @@ void whisper_free(struct whisper_context * ctx) {
         whisper_free_state(ctx->state);
 
         delete ctx;
+    }
+}
+
+void whisper_free_params(struct whisper_full_params * params) {
+    if (params) {
+        delete params;
     }
 }
 
@@ -3049,8 +3134,8 @@ int whisper_model_n_mels(struct whisper_context * ctx) {
     return ctx->model.hparams.n_mels;
 }
 
-int whisper_model_f16(struct whisper_context * ctx) {
-    return ctx->model.hparams.f16;
+int whisper_model_ftype(struct whisper_context * ctx) {
+    return ctx->model.hparams.ftype;
 }
 
 int whisper_model_type(struct whisper_context * ctx) {
@@ -3206,6 +3291,14 @@ const char * whisper_print_system_info(void) {
 
 ////////////////////////////////////////////////////////////////////////////
 
+struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sampling_strategy strategy) {
+    struct whisper_full_params params = whisper_full_default_params(strategy);
+
+    struct whisper_full_params* result = new whisper_full_params();
+    *result = params;
+    return result;
+}
+
 struct whisper_full_params whisper_full_default_params(enum whisper_sampling_strategy strategy) {
     struct whisper_full_params result = {
         /*.strategy         =*/ strategy,
@@ -3238,6 +3331,7 @@ struct whisper_full_params whisper_full_default_params(enum whisper_sampling_str
         /*.prompt_n_tokens  =*/ 0,
 
         /*.language         =*/ "en",
+        /*.detect_language  =*/ false,
 
         /*.suppress_blank   =*/ true,
         /*.suppress_non_speech_tokens =*/ false,
@@ -3824,7 +3918,7 @@ int whisper_full_with_state(
     }
 
     // auto-detect language if not specified
-    if (params.language == nullptr || strlen(params.language) == 0 || strcmp(params.language, "auto") == 0) {
+    if (params.language == nullptr || strlen(params.language) == 0 || strcmp(params.language, "auto") == 0 || params.detect_language) {
         std::vector<float> probs(whisper_lang_max_id() + 1, 0.0f);
 
         const auto lang_id = whisper_lang_auto_detect_with_state(ctx, state, 0, params.n_threads, probs.data());
@@ -3836,6 +3930,9 @@ int whisper_full_with_state(
         params.language = whisper_lang_str(lang_id);
 
         fprintf(stderr, "%s: auto-detected language: %s (p = %f)\n", __func__, params.language, probs[whisper_lang_id(params.language)]);
+        if (params.detect_language) {
+            return 0;
+        }
     }
 
     if (params.token_timestamps) {
@@ -4753,48 +4850,50 @@ WHISPER_API const char * whisper_bench_memcpy_str(int n_threads) {
 
     ggml_time_init();
 
-    size_t n    = 50;
-    size_t arr  = n_threads > 0 ? 1024 : n_threads; // trick to avoid compiler optimizations
+    size_t n    = 20;
+    size_t arr  = n_threads > 0 ? 1024llu : n_threads; // trick to avoid compiler optimizations
 
-    // 1 GB array
+    // 1GB MB array
     const size_t size = arr*1024llu*1024llu;
 
-    char * src = (char *) malloc(size);
-    char * dst = (char *) malloc(size);
-
-    for (size_t i = 0; i < size; i++) src[i] = i;
-
-    memcpy(dst, src, size); // heat-up
-
-    double tsum = 0.0;
-
-    for (size_t i = 0; i < n; i++) {
-        const int64_t t0 = ggml_time_us();
-
-        memcpy(dst, src, size);
-
-        const int64_t t1 = ggml_time_us();
-
-        tsum += (t1 - t0)*1e-6;
-
-        src[0] = rand();
-    }
-
-    snprintf(strbuf, sizeof(strbuf), "memcpy: %.2f GB/s\n", (double) (n*size)/(tsum*1024llu*1024llu*1024llu));
-    s += strbuf;
-
-    // needed to prevent the compile from optimizing the memcpy away
+    // single-thread
     {
-        double sum = 0.0;
+        char * src = (char *) malloc(size);
+        char * dst = (char *) malloc(size);
 
-        for (size_t i = 0; i < size; i++) sum += dst[i];
+        for (size_t i = 0; i < size; i++) src[i] = i;
 
-        snprintf(strbuf, sizeof(strbuf), "sum:    %s %f\n", sum == -536870910.00 ? "ok" : "error", sum);
+        memcpy(dst, src, size); // heat-up
+
+        double tsum = 0.0;
+        double sum  = 0.0;
+
+        for (size_t i = 0; i < n; i++) {
+            const int64_t t0 = ggml_time_us();
+
+            memcpy(dst, src, size);
+
+            const int64_t t1 = ggml_time_us();
+
+            tsum += (t1 - t0)*1e-6;
+
+            src[rand() % size] = rand() % 256;
+        }
+
+        snprintf(strbuf, sizeof(strbuf), "memcpy: %.2f GB/s (1 thread)\n", (double) (n*size)/(tsum*1024llu*1024llu*1024llu));
         s += strbuf;
-    }
 
-    free(src);
-    free(dst);
+        // needed to prevent the compiler from optimizing the memcpy away
+        {
+            for (size_t i = 0; i < size; i++) sum += dst[i];
+
+            snprintf(strbuf, sizeof(strbuf), "sum:    %f\n", sum);
+            s += strbuf;
+        }
+
+        free(src);
+        free(dst);
+    }
 
     return s.c_str();
 }
@@ -4823,25 +4922,42 @@ WHISPER_API const char * whisper_bench_ggml_mul_mat_str(int n_threads) {
     // b: N*N*sizeof(float)
     // c: N*N*sizeof(float)
     // when F16 is used, there is an extra work buffer of size N*N*sizeof(float)
-    std::vector<char> buf(4llu*N_max*N_max*sizeof(float) + 4*256);
+    std::vector<char> buf(4llu*N_max*N_max*sizeof(float) + 4*512);
 
+    // put a bunch of random data in the buffer
     for (size_t i = 0; i < buf.size(); i++) buf[i] = i;
 
     for (int j = 0; j < (int) sizes.size(); j++) {
+        int n_q4_0 = 0;
+        int n_q4_1 = 0;
+        int n_q5_0 = 0;
+        int n_q5_1 = 0;
+        int n_q8_0 = 0;
         int n_fp16 = 0;
         int n_fp32 = 0;
 
         // GFLOPS/s
+        double s_q4_0 = 0.0;
+        double s_q4_1 = 0.0;
+        double s_q5_0 = 0.0;
+        double s_q5_1 = 0.0;
+        double s_q8_0 = 0.0;
         double s_fp16 = 0.0;
         double s_fp32 = 0.0;
 
         const size_t N = sizes[j];
 
-        for (int k = 0; k < 2; ++k) {
-            const ggml_type wtype = k == 0 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        for (int k = 0; k < 7; ++k) {
+            const ggml_type wtype =
+                k == 0 ? GGML_TYPE_Q4_0 :
+                k == 1 ? GGML_TYPE_Q4_1 :
+                k == 2 ? GGML_TYPE_Q5_0 :
+                k == 3 ? GGML_TYPE_Q5_1 :
+                k == 4 ? GGML_TYPE_Q8_0 :
+                k == 5 ? GGML_TYPE_F16  : GGML_TYPE_F32;
 
-            double & s = k == 0 ? s_fp16 : s_fp32;
-            int    & n = k == 0 ? n_fp16   : n_fp32;
+            double & s = k == 0 ? s_q4_0 : k == 1 ? s_q4_1 : k == 2 ? s_q5_0 : k == 3 ? s_q5_1 : k == 4 ? s_q8_0 : k == 5 ? s_fp16 : /*k == 6*/ s_fp32;
+            int    & n = k == 0 ? n_q4_0 : k == 1 ? n_q4_1 : k == 2 ? n_q5_0 : k == 3 ? n_q5_1 : k == 4 ? n_q8_0 : k == 5 ? n_fp16 : /*k == 6*/ n_fp32;
 
             struct ggml_init_params gparams = {
                 /*.mem_size   =*/ buf.size(),
@@ -4885,8 +5001,19 @@ WHISPER_API const char * whisper_bench_ggml_mul_mat_str(int n_threads) {
             s = ((2.0*N*N*N*n)/tsum)*1e-9;
         }
 
-        snprintf(strbuf, sizeof(strbuf), "ggml_mul_mat: %5zu x %5zu: F16 %8.1f GFLOPS (%3d runs) / F32 %8.1f GFLOPS (%3d runs)\n",
-            N, N, s_fp16, n_fp16, s_fp32, n_fp32);
+        // Q4_0 | Q4_1
+        snprintf(strbuf, sizeof(strbuf), "%4zu x %4zu: Q4_0 %7.1f GFLOPS (%3d runs) | Q4_1 %7.1f GFLOPS (%3d runs)\n",
+                N, N, s_q4_0, n_q4_0, s_q4_1, n_q4_1);
+        s += strbuf;
+
+        // Q5_0 | Q5_1 | Q8_0
+        snprintf(strbuf, sizeof(strbuf), "%4zu x %4zu: Q5_0 %7.1f GFLOPS (%3d runs) | Q5_1 %7.1f GFLOPS (%3d runs) | Q8_0 %7.1f GFLOPS (%3d runs)\n",
+                N, N, s_q5_0, n_q5_0, s_q5_1, n_q5_1, s_q8_0, n_q8_0);
+        s += strbuf;
+
+        // F16 | F32
+        snprintf(strbuf, sizeof(strbuf), "%4zu x %4zu: F16  %7.1f GFLOPS (%3d runs) | F32  %7.1f GFLOPS (%3d runs)\n",
+                N, N, s_fp16, n_fp16, s_fp32, n_fp32);
         s += strbuf;
     }
 

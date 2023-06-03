@@ -72,7 +72,7 @@ enum class ESpeechRecognizerLanguage : uint8
 	Hi UMETA(DisplayName = "Hindi"),
 	Fi UMETA(DisplayName = "Finnish"),
 	Vi UMETA(DisplayName = "Vietnamese"),
-	Iw UMETA(DisplayName = "Hebrew"),
+	He UMETA(DisplayName = "Hebrew"),
 	Uk UMETA(DisplayName = "Ukrainian"),
 	El UMETA(DisplayName = "Greek"),
 	Ms UMETA(DisplayName = "Malay"),
@@ -202,8 +202,8 @@ inline const char* EnumToString(ESpeechRecognizerLanguage Enum)
 		return "fi";
 	case ESpeechRecognizerLanguage::Vi:
 		return "vi";
-	case ESpeechRecognizerLanguage::Iw:
-		return "iw";
+	case ESpeechRecognizerLanguage::He:
+		return "he";
 	case ESpeechRecognizerLanguage::Uk:
 		return "uk";
 	case ESpeechRecognizerLanguage::El:
