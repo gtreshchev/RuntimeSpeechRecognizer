@@ -75,7 +75,10 @@ static int sched_yield (void) {
 }
 #else
 #include <pthread.h>
-#include <stdatomic.h>
+#include <atomic>
+
+typedef std::atomic<int> atomic_int;
+typedef std::atomic<bool> atomic_bool;
 
 typedef void* thread_ret_t;
 #endif
@@ -200,7 +203,7 @@ typedef double ggml_float;
 #define GGML_COMPUTE_FP32_TO_FP16(x) _mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss(x), 0), 0)
 #else
 #define GGML_COMPUTE_FP16_TO_FP32(x) _cvtsh_ss(x)
-#define GGML_COMPUTE_FP32_TO_FP16(x) _cvtss_sh(x, 0)
+#define GGML_COMPUTE_FP32_TO_FP16(x) _cvtss_sh((float)x, 0)
 #endif
 
 #elif defined(__POWER9_VECTOR__)
@@ -458,6 +461,7 @@ int64_t ggml_cycles_per_ms(void) {
 // cache line
 //
 
+#ifndef CACHE_LINE_SIZE
 #if defined(__cpp_lib_hardware_interference_size)
 #define CACHE_LINE_SIZE hardware_destructive_interference_size
 #else
@@ -465,6 +469,7 @@ int64_t ggml_cycles_per_ms(void) {
 #define CACHE_LINE_SIZE 128
 #else
 #define CACHE_LINE_SIZE 64
+#endif
 #endif
 #endif
 
@@ -3678,7 +3683,7 @@ struct ggml_state {
 
 // global state
 static struct ggml_state g_state;
-static atomic_int g_state_barrier = 0;
+static atomic_int g_state_barrier(0);
 
 // barrier via spin lock
 inline static void ggml_critical_section_start(void) {
@@ -14037,15 +14042,23 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     return 0;
 }
 
+#ifdef _WIN32
+#define ATOMIC_INT_INIT(value) (value)
+#define ATOMIC_BOOL_INIT(value) (value)
+#else
+#define ATOMIC_INT_INIT(value) {value}
+#define ATOMIC_BOOL_INIT(value) {value}
+#endif
+
 void ggml_graph_compute(struct ggml_context * ctx, struct ggml_cgraph * cgraph) {
     const int n_threads = cgraph->n_threads;
 
     struct ggml_compute_state_shared state_shared = {
         /*.spin      =*/ GGML_LOCK_INITIALIZER,
         /*.n_threads =*/ n_threads,
-        /*.n_ready   =*/ 0,
-        /*.has_work  =*/ false,
-        /*.stop      =*/ false,
+        /*.n_ready   =*/ ATOMIC_INT_INIT(0),
+        /*.has_work  =*/ ATOMIC_BOOL_INIT(false),
+        /*.stop      =*/ ATOMIC_BOOL_INIT(false),
     };
     struct ggml_compute_state * workers = n_threads > 1 ? (ggml_compute_state *)alloca(sizeof(struct ggml_compute_state)*(n_threads - 1)) : NULL;
 
