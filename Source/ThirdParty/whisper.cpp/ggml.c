@@ -463,7 +463,7 @@ int64_t ggml_cycles_per_ms(void) {
 
 #ifndef CACHE_LINE_SIZE
 #if defined(__cpp_lib_hardware_interference_size)
-#define CACHE_LINE_SIZE hardware_destructive_interference_size
+#define CACHE_LINE_SIZE std::hardware_destructive_interference_size
 #else
 #if defined(__POWER9_VECTOR__)
 #define CACHE_LINE_SIZE 128
