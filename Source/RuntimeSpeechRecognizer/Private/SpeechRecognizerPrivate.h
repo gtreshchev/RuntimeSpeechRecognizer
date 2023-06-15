@@ -15,9 +15,9 @@
 #endif
 
 // Required because sometimes even if __cpp_lib_hardware_interference_size is present, hardware_destructive_interference_size is not always present
-#if defined(__cpp_lib_hardware_interference_size)
+/*#if defined(__cpp_lib_hardware_interference_size)
 #undef __cpp_lib_hardware_interference_size
-#endif 
+#endif */
 
 #if !PLATFORM_LITTLE_ENDIAN
 #define GGML_BIG_ENDIAN
