@@ -462,15 +462,27 @@ int64_t ggml_cycles_per_ms(void) {
 //
 
 #ifndef CACHE_LINE_SIZE
-#if defined(__cpp_lib_hardware_interference_size)
-#define CACHE_LINE_SIZE std::hardware_destructive_interference_size
-#else
-#if defined(__POWER9_VECTOR__)
-#define CACHE_LINE_SIZE 128
-#else
-#define CACHE_LINE_SIZE 64
-#endif
-#endif
+    /*#if defined(__cpp_lib_hardware_interference_size) && (__cpp_lib_hardware_interference_size >= 201703L)
+        #define CACHE_LINE_SIZE hardware_destructive_interference_size
+    #el*/#if defined(__GNUC__) || defined(__clang__)
+        #if defined(__x86_64__) || defined(__powerpc64__) || defined(__aarch64__) || defined(__sparc__)
+            #define CACHE_LINE_SIZE 64
+        #elif defined(__s390__) || defined(__s390x__)
+            #define CACHE_LINE_SIZE 256
+        #elif defined(powerpc) || defined(__powerpc__) || defined(__ppc__)
+            #define CACHE_LINE_SIZE 128
+        #else
+            #define CACHE_LINE_SIZE 64
+        #endif
+    #elif defined(_MSC_VER)
+        #if defined(_M_X64) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_AMD64)
+            #define CACHE_LINE_SIZE 64
+        #else
+            #define CACHE_LINE_SIZE 64
+        #endif
+    #else
+        #define CACHE_LINE_SIZE 64
+    #endif
 #endif
 
 static const size_t CACHE_LINE_SIZE_F32 = CACHE_LINE_SIZE/sizeof(float);
