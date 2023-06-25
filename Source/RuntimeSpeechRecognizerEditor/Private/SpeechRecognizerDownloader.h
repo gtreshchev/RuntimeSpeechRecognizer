@@ -5,8 +5,9 @@
 #include "CoreMinimal.h"
 #include "Http.h"
 #include "Templates/SharedPointer.h"
+#include "Misc/EngineVersionComparison.h"
 
-#if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 0)
+#if UE_VERSION_OLDER_THAN(5, 1, 0)
 template <typename InIntType>
 struct TIntVector2
 {
