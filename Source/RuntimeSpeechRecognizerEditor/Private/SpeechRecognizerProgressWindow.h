@@ -3,7 +3,8 @@
 #pragma once
 
 #include "SlateExtras.h"
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 27
+#include "Misc/EngineVersionComparison.h"
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
 #include "Styling/CoreStyle.h"
 #include "EditorStyleSet.h"
 #else
@@ -63,7 +64,7 @@ public:
 						SNew(STextBlock)
 							.AutoWrapText(true)
 							.Text(Title)
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 27
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
 							.Font(FCoreStyle::GetDefaultFontStyle("Light", 14))
 #else
 							.Font(FStarshipCoreStyle::GetDefaultFontStyle("NormalFont", 14))
@@ -76,7 +77,7 @@ public:
 					[
 						SNew(STextBlock)
 							.Text(this, &SSpeechRecognizerProgressWindow::GetPercentageText)
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 27
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
 							.Font(FCoreStyle::GetDefaultFontStyle("Light", 14))
 #else
 							.Font(FStarshipCoreStyle::GetDefaultFontStyle("NormalFont", 14))
@@ -109,7 +110,7 @@ public:
 		];
 
 		SBorder::Construct(SBorder::FArguments()
-#if !(ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION > 0)
+#if UE_VERSION_OLDER_THAN(5, 1, 0)
 		                   .BorderImage(FEditorStyle::GetBrush("Menu.Background"))
 #else
 		                   .BorderImage(FAppStyle::GetBrush("Brushes.Header"))

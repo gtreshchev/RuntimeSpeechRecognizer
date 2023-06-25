@@ -3,13 +3,15 @@
 #pragma once
 
 #include "Engine/EngineBaseTypes.h"
-#include "Runtime/Launch/Resources/Version.h"
+#include "Misc/EngineVersionComparison.h"
 
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 25
+#if UE_VERSION_OLDER_THAN(4, 26, 0)
 #include "DSP/BufferVectorOperations.h"
 #endif
 
-#if ENGINE_MAJOR_VERSION == 4 && ENGINE_MINOR_VERSION <= 25
+#include "SpeechRecognizerTypes.generated.h"
+
+#if UE_VERSION_OLDER_THAN(4, 26, 0)
 namespace Audio
 {
 	using FAlignedFloatBuffer = Audio::AlignedFloatBuffer;
