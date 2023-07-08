@@ -367,10 +367,11 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeec
 			LanguageModelDownloadState.Downloader->CancelDownload();
 		}));
 
-	LanguageModelDownloadState.Downloader->DownloadFile(URL, [this](float ProgressAlpha)
+	LanguageModelDownloadState.Downloader->DownloadFile(URL, 15, FString(), TNumericLimits<TArray<uint8>::SizeType>::Max(), [this](int64 BytesReceived, int64 ContentSize)
 	{
-		*LanguageModelDownloadState.ProgressValue = ProgressAlpha;
-		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloading language model file: %f"), ProgressAlpha);
+		const float ProgressRatio = static_cast<float>(BytesReceived) / ContentSize;
+		*LanguageModelDownloadState.ProgressValue = ProgressRatio;
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloading language model file: %f"), ProgressRatio);
 	}).Next([this, EditorLMFilePathFull](TArray64<uint8>&& DownloadedData) mutable
 	{
 		if (DownloadedData.Num() <= 0)

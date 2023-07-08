@@ -61,45 +61,65 @@ public:
 
 	/**
 	 * Download a file from the specified URL
-	 * 
+	 *
 	 * @param URL The URL of the file to download
-	 * @param OnProgress A function that is called with the progress of the download as a float between 0 and 1
+	 * @param Timeout The timeout value in seconds
+	 * @param ContentType The content type of the file
+	 * @param MaxChunkSize The maximum size of each chunk to download in bytes
+	 * @param OnProgress A function that is called with the progress as BytesReceived and ContentSize
 	 * @return A future that resolves to the downloaded data as a TArray64<uint8>
 	 */
-	virtual TFuture<TArray64<uint8>> DownloadFile(const FString& URL, const TFunction<void(float)>& OnProgress);
+	virtual TFuture<TArray64<uint8>> DownloadFile(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, const TFunction<void(int64, int64)>& OnProgress);
 
 	/**
-	 * Download a file by chunks, where each chunk is requested with a Range header that specifies the byte range to retrieve
-	 * This method recursively calls itself until the entire file has been downloaded or until the download is canceled
-	 * 
+	 * Download a file by dividing it into chunks and downloading each chunk separately
+	 *
 	 * @param URL The URL of the file to download
-	 * @param LanguageModelSize The size of the language model file to download in bytes. Must be equal or less than TNumericLimits<TArray64<uint8>::SizeType>::Max()
-	 * @param MaxChunkSize The maximum size of each chunk to download in bytes. Must be less than or equal to LanguageModelSize
-	 * @param OnProgress A function that is called with the progress of the download as a float between 0 and 1
-	 * @param InternalContentRange A vector representing the byte range that has already been downloaded
-	 * @param InternalResultData The data that has already been downloaded
+	 * @param Timeout The timeout value in seconds
+	 * @param ContentType The content type of the file
+	 * @param MaxChunkSize The maximum size of each chunk to download in bytes
+	 * @param ChunkRange The range of chunks to download
+	 * @param OnProgress A function that is called with the progress as BytesReceived and ContentSize
+	 * @param OnChunkDownloaded A function that is called when each chunk is downloaded
+	 * @return A future that resolves to true if all chunks are downloaded successfully, false otherwise
+	 */
+	virtual TFuture<bool> DownloadFilePerChunk(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, FInt64Vector2 ChunkRange, const TFunction<void(int64, int64)>& OnProgress, const TFunction<void(TArray64<uint8>&&)>& OnChunkDownloaded);
+
+	/**
+	 * Download a single chunk of a file.
+	 *
+	 * @param URL The URL of the file to download
+	 * @param Timeout The timeout value in seconds
+	 * @param ContentType The content type of the file
+	 * @param ContentSize The size of the file in bytes
+	 * @param ChunkRange The range of the chunk to download
+	 * @param OnProgress A function that is called with the progress as BytesReceived and ContentSize
 	 * @return A future that resolves to the downloaded data as a TArray64<uint8>
 	 */
-	virtual TFuture<TArray64<uint8>> DownloadFileByChunk(const FString& URL, int64 LanguageModelSize, int64 MaxChunkSize, const TFunction<void(float)>& OnProgress, FInt64Vector2 InternalContentRange = FInt64Vector2(), TArray64<uint8>&& InternalResultData = TArray64<uint8>());
+	virtual TFuture<TArray64<uint8>> DownloadFileByChunk(const FString& URL, float Timeout, const FString& ContentType, int64 ContentSize, FInt64Vector2 ChunkRange, const TFunction<void(int64, int64)>& OnProgress);
 
 	/**
-	 * Cancel the download
-	 */
-	void CancelDownload();
-
-protected:
-	/** A weak pointer to the HTTP request being used for the download */
-	TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> HttpRequestPtr;
-
-	/** A flag indicating whether the download has been canceled */
-	bool bCanceled;
-
-	/**
-	 * Get the content length of the file to be downloaded
+	 * Get the content size of the file to be downloaded
 	 *
 	 * @param URL The URL of the file to be downloaded
 	 * @param Timeout The timeout value in seconds
 	 * @return A future that resolves to the content length of the file to be downloaded in bytes
 	 */
-	TFuture<int64> GetLanguageModelSize(const FString& URL, float Timeout);
+	TFuture<int64> GetContentSize(const FString& URL, float Timeout);
+
+	/**
+	 * Cancel the download
+	 */
+	virtual void CancelDownload();
+
+protected:
+	/** A weak pointer to the HTTP request being used for the download */
+#if UE_VERSION_NEWER_THAN(4, 26, 0)
+	TWeakPtr<IHttpRequest, ESPMode::ThreadSafe> HttpRequestPtr;
+#else
+	TWeakPtr<IHttpRequest> HttpRequestPtr;
+#endif
+
+	/** A flag indicating whether the download has been canceled */
+	bool bCanceled;
 };
