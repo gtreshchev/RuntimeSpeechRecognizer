@@ -2328,8 +2328,8 @@ static void ggml_vec_dot_q4_0_q8_0(const int n, float * restrict s, const void *
 
     // First round without accumulation
     {
-        _mm_prefetch(&x[0] + sizeof(block_q4_0), _MM_HINT_T0);
-        _mm_prefetch(&y[0] + sizeof(block_q8_0), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&x[0] + sizeof(block_q4_0)), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&y[0] + sizeof(block_q8_0)), _MM_HINT_T0);
 
         // Compute combined scale for the block 0 and 1
         const __m128 d_0_1 = _mm_set1_ps( GGML_FP16_TO_FP32(x[0].d) * GGML_FP16_TO_FP32(y[0].d) );
@@ -2346,8 +2346,8 @@ static void ggml_vec_dot_q4_0_q8_0(const int n, float * restrict s, const void *
         bx_1 = _mm_sub_epi8(bx_1, off);
         const __m128i i32_1 = mul_sum_i8_pairs(bx_1, by_1);
 
-        _mm_prefetch(&x[1] + sizeof(block_q4_0), _MM_HINT_T0);
-        _mm_prefetch(&y[1] + sizeof(block_q8_0), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&x[1] + sizeof(block_q4_0)), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&y[1] + sizeof(block_q8_0)), _MM_HINT_T0);
 
         // Compute combined scale for the block 2 and 3
         const __m128 d_2_3 = _mm_set1_ps( GGML_FP16_TO_FP32(x[1].d) * GGML_FP16_TO_FP32(y[1].d) );
@@ -2379,8 +2379,8 @@ static void ggml_vec_dot_q4_0_q8_0(const int n, float * restrict s, const void *
 
     // Main loop
     for (int i = 2; i < nb; i+=2) {
-        _mm_prefetch(&x[i] + sizeof(block_q4_0), _MM_HINT_T0);
-        _mm_prefetch(&y[i] + sizeof(block_q8_0), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&x[i] + sizeof(block_q4_0)), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&y[i] + sizeof(block_q8_0)), _MM_HINT_T0);
 
         // Compute combined scale for the block 0 and 1
         const __m128 d_0_1 = _mm_set1_ps( GGML_FP16_TO_FP32(x[i].d) * GGML_FP16_TO_FP32(y[i].d) );
@@ -2397,8 +2397,8 @@ static void ggml_vec_dot_q4_0_q8_0(const int n, float * restrict s, const void *
         bx_1 = _mm_sub_epi8(bx_1, off);
         const __m128i i32_1 = mul_sum_i8_pairs(bx_1, by_1);
 
-        _mm_prefetch(&x[i] + 2 * sizeof(block_q4_0), _MM_HINT_T0);
-        _mm_prefetch(&y[i] + 2 * sizeof(block_q8_0), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&x[i] + 2 * sizeof(block_q4_0)), _MM_HINT_T0);
+        _mm_prefetch((const char*)(&y[i] + 2 * sizeof(block_q8_0)), _MM_HINT_T0);
 
         // Compute combined scale for the block 2 and 3
         const __m128 d_2_3 = _mm_set1_ps( GGML_FP16_TO_FP32(x[i + 1].d) * GGML_FP16_TO_FP32(y[i + 1].d) );
@@ -2752,7 +2752,7 @@ static void ggml_vec_dot_q5_0_q8_0(const int n, float * restrict s, const void *
 
         __m256i bx = bytes_from_nibbles_32(x[i].qs);
         __m256i bxhi = bytes_from_bits_32(x[i].qh);
-        bxhi = _mm256_andnot_si256(bxhi, _mm256_set1_epi8((char)0xF0));
+        bxhi = _mm256_andnot_si256(bxhi, _mm256_set1_epi8(static_cast<char>(0x0F)));
         bx = _mm256_or_si256(bx, bxhi);
 
         __m256i by = _mm256_loadu_si256((const __m256i *)y[i].qs);
@@ -2767,7 +2767,7 @@ static void ggml_vec_dot_q5_0_q8_0(const int n, float * restrict s, const void *
 #elif defined(__AVX__)
     // Initialize accumulator with zeros
     __m256 acc = _mm256_setzero_ps();
-    __m128i mask = _mm_set1_epi8((char)0xF0);
+    __m128i mask = _mm_set1_epi8(static_cast<char>(0xF0));
 
     // Main loop
     for (int i = 0; i < nb; i++) {

@@ -23,6 +23,62 @@
 #define GGML_BIG_ENDIAN
 #endif
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM)
+#ifndef __ARM_NEON
+#define __ARM_NEON 1
+#endif
+#ifndef __aarch64__
+#define __aarch64__ 1
+#endif
+#endif
+
+// Microsoft Visual Studio
+#if defined(_MSC_VER) && !defined(__clang__)
+
+#if (defined(_M_IX86_FP) && _M_IX86_FP >= 2) || defined(_M_X64)
+#ifndef __SSE2__
+#define __SSE2__ 1
+#endif
+#ifndef __SSSE3__
+#define __SSSE3__ 1
+#endif
+#endif
+
+#if !defined(__AVX__) && (_MSC_VER >= 1700 && defined(__SSE2__))
+#define __AVX__ 1
+#endif
+#if !defined(__AVX2__) && (_MSC_VER >= 1800 && defined(__SSE2__))
+#define __AVX2__ 1
+#endif
+
+/* AVX512 requires VS 15.3 */
+#if !defined(__AVX512F__) && (_MSC_VER >= 1911 && defined(__AVX__))
+// Commented out because it has some platform-specific issues
+//#define __AVX512F__ 1
+#endif
+
+/* AVX512VL not available until VS 15.5 */
+#if defined(__AVX512F__) && _MSC_VER >= 1912
+#define __AVX512VL__ 1
+#endif
+
+/* VBMI added in 15.7 */
+#if defined(__AVX512F__) && _MSC_VER >= 1914
+#define __AVX512VBMI__ 1
+#endif
+
+#endif
+
+// TODO: Add similar checks for other compilers
+
+#if !defined(__ARM_NEON) && defined(__ARM_NEON__)
+#define __ARM_NEON 1
+#endif
+
+#if !defined(__ARM_FEATURE_FMA) && defined(__arm__)
+#define __ARM_FEATURE_FMA 1
+#endif
+
 THIRD_PARTY_INCLUDES_START
 
 #include "whisper.h"
