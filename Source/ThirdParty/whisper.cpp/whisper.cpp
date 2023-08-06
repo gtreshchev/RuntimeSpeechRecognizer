@@ -1,6 +1,10 @@
 #include "whisper.h"
-#if WHISPER_USE_COREML
+#ifdef WHISPER_USE_COREML
 #include "coreml/whisper-encoder.h"
+#endif
+
+#if WHISPER_USE_OPENVINO
+#include "openvino/whisper-openvino-encoder.h"
 #endif
 
 #include "ggml.h"
@@ -10,6 +14,7 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -18,6 +23,10 @@
 #include <vector>
 #include <regex>
 #include <random>
+
+#if defined(_MSC_VER)
+#pragma warning(disable: 4244 4267) // possible loss of data
+#endif
 
 #if defined(GGML_BIG_ENDIAN)
 #include <bit>
@@ -84,7 +93,7 @@ static void byteswap_tensor(ggml_tensor * tensor) {
 #define WHISPER_ASSERT(x) \
     do { \
         if (!(x)) { \
-            fprintf(stderr, "WHISPER_ASSERT: %s:%d: %s\n", __FILE__, __LINE__, #x); \
+            log("WHISPER_ASSERT: %s:%d: %s\n", __FILE__, __LINE__, #x); \
             abort(); \
         } \
     } while (0)
@@ -376,16 +385,18 @@ struct whisper_vocab {
     std::map<token, id> token_to_id;
     std::map<id, token> id_to_token;
 
-    id token_eot  = 50256;
-    id token_sot  = 50257;
-    id token_prev = 50360;
-    id token_solm = 50361; // ??
-    id token_not  = 50362; // no timestamps
-    id token_beg  = 50363;
-
-    // available tasks
-    static const id token_translate  = 50358;
-    static const id token_transcribe = 50359;
+    // reference: https://github.com/openai/whisper/blob/248b6cb124225dd263bb9bd32d060b6517e067f8/whisper/tokenizer.py#L334-L349
+    id token_eot        = 50256;
+    id token_sot        = 50257;
+    // task tokens (used only for multilingual models)
+    id token_translate  = 50357;
+    id token_transcribe = 50358;
+    // other special tokens
+    id token_solm       = 50359; // [TDRZ] used by tinydiarize models to indicate speaker turn
+    id token_prev       = 50360;
+    id token_nosp       = 50361;
+    id token_not        = 50362; // no timestamps
+    id token_beg        = 50363; // begin timestamps
 
     bool is_multilingual() const {
         return n_vocab == 51865;
@@ -399,6 +410,8 @@ struct whisper_segment {
     std::string text;
 
     std::vector<whisper_token_data> tokens;
+
+    bool speaker_turn_next;
 };
 
 // medium
@@ -652,6 +665,10 @@ struct whisper_state {
     whisper_coreml_context * ctx_coreml = nullptr;
 #endif
 
+#ifdef WHISPER_USE_OPENVINO
+    whisper_openvino_context * ctx_openvino = nullptr;
+#endif
+
     // [EXPERIMENTAL] token-level timestamps data
     int64_t t_beg = 0;
     int64_t t_last = 0;
@@ -707,6 +724,21 @@ struct whisper_context {
     std::string path_model; // populated by whisper_init_from_file()
 };
 
+static void whisper_default_log(const char * text) {
+    fprintf(stderr, "%s", text);
+}
+
+static whisper_log_callback whisper_log = whisper_default_log;
+
+static void log(const char * fmt, ...) {
+    if (!whisper_log) return;
+    char buf[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    whisper_log(buf);
+}
+
 template<typename T>
 static void read_safe(whisper_model_loader * loader, T & dest) {
     loader->read(loader->context, &dest, sizeof(T));
@@ -730,7 +762,7 @@ static bool kv_cache_init(
     cache.ctx = ggml_init(params);
 
     if (!cache.ctx) {
-        fprintf(stderr, "%s: failed to allocate memory for kv cache\n", __func__);
+        log("%s: failed to allocate memory for kv cache\n", __func__);
         return false;
     }
 
@@ -766,7 +798,7 @@ static bool kv_cache_reinit(struct whisper_kv_cache & cache) {
     cache.ctx = ggml_init(params);
 
     if (!cache.ctx) {
-        fprintf(stderr, "%s: failed to allocate memory for kv cache\n", __func__);
+        log("%s: failed to allocate memory for kv cache\n", __func__);
         return false;
     }
 
@@ -795,7 +827,7 @@ static void kv_cache_free(struct whisper_kv_cache & cache) {
 // see the convert-pt-to-ggml.py script for details
 //
 static bool whisper_model_load(struct whisper_model_loader * loader, whisper_context & wctx) {
-    fprintf(stderr, "%s: loading model\n", __func__);
+    log("%s: loading model\n", __func__);
 
     const int64_t t_start_us = ggml_time_us();
 
@@ -808,8 +840,8 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
     {
         uint32_t magic;
         read_safe(loader, magic);
-        if (magic != 0x67676d6c) {
-            fprintf(stderr, "%s: invalid model data (bad magic)\n", __func__);
+        if (magic != GGML_FILE_MAGIC) {
+            log("%s: invalid model data (bad magic)\n", __func__);
             return false;
         }
     }
@@ -860,25 +892,25 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         // in order to save memory and also to speed up the computation
         wctx.wtype = ggml_ftype_to_ggml_type((ggml_ftype) (model.hparams.ftype));
         if (wctx.wtype == GGML_TYPE_COUNT) {
-            fprintf(stderr, "%s: invalid model (bad ftype value %d)\n", __func__, model.hparams.ftype);
+            log("%s: invalid model (bad ftype value %d)\n", __func__, model.hparams.ftype);
             return false;
         }
 
         const size_t scale = model.hparams.ftype ? 1 : 2;
 
-        fprintf(stderr, "%s: n_vocab       = %d\n", __func__, hparams.n_vocab);
-        fprintf(stderr, "%s: n_audio_ctx   = %d\n", __func__, hparams.n_audio_ctx);
-        fprintf(stderr, "%s: n_audio_state = %d\n", __func__, hparams.n_audio_state);
-        fprintf(stderr, "%s: n_audio_head  = %d\n", __func__, hparams.n_audio_head);
-        fprintf(stderr, "%s: n_audio_layer = %d\n", __func__, hparams.n_audio_layer);
-        fprintf(stderr, "%s: n_text_ctx    = %d\n", __func__, hparams.n_text_ctx);
-        fprintf(stderr, "%s: n_text_state  = %d\n", __func__, hparams.n_text_state);
-        fprintf(stderr, "%s: n_text_head   = %d\n", __func__, hparams.n_text_head);
-        fprintf(stderr, "%s: n_text_layer  = %d\n", __func__, hparams.n_text_layer);
-        fprintf(stderr, "%s: n_mels        = %d\n", __func__, hparams.n_mels);
-        fprintf(stderr, "%s: ftype         = %d\n", __func__, model.hparams.ftype);
-        fprintf(stderr, "%s: qntvr         = %d\n", __func__, qntvr);
-        fprintf(stderr, "%s: type          = %d\n", __func__, model.type);
+        log("%s: n_vocab       = %d\n", __func__, hparams.n_vocab);
+        log("%s: n_audio_ctx   = %d\n", __func__, hparams.n_audio_ctx);
+        log("%s: n_audio_state = %d\n", __func__, hparams.n_audio_state);
+        log("%s: n_audio_head  = %d\n", __func__, hparams.n_audio_head);
+        log("%s: n_audio_layer = %d\n", __func__, hparams.n_audio_layer);
+        log("%s: n_text_ctx    = %d\n", __func__, hparams.n_text_ctx);
+        log("%s: n_text_state  = %d\n", __func__, hparams.n_text_state);
+        log("%s: n_text_head   = %d\n", __func__, hparams.n_text_head);
+        log("%s: n_text_layer  = %d\n", __func__, hparams.n_text_layer);
+        log("%s: n_mels        = %d\n", __func__, hparams.n_mels);
+        log("%s: ftype         = %d\n", __func__, model.hparams.ftype);
+        log("%s: qntvr         = %d\n", __func__, qntvr);
+        log("%s: type          = %d\n", __func__, model.type);
 
         // print memory requirements
         {
@@ -896,7 +928,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             const size_t mem_required_decoder =
                 scale*MEM_REQ_KV_SELF.at(model.type);
 
-            fprintf(stderr, "%s: mem required  = %7.2f MB (+ %7.2f MB per decoder)\n", __func__,
+            log("%s: mem required  = %7.2f MB (+ %7.2f MB per decoder)\n", __func__,
                     mem_required / 1024.0 / 1024.0, mem_required_decoder / 1024.0 / 1024.0);
         }
 
@@ -928,7 +960,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         read_safe(loader, n_vocab);
 
         //if (n_vocab != model.hparams.n_vocab) {
-        //    fprintf(stderr, "%s: invalid model file '%s' (bad vocab size %d != %d)\n",
+        //    log("%s: invalid model file '%s' (bad vocab size %d != %d)\n",
         //            __func__, fname.c_str(), n_vocab, model.hparams.n_vocab);
         //    return false;
         //}
@@ -948,7 +980,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
                 word.assign(&tmp[0], tmp.size());
             } else {
                 // seems like we have an empty-string token in multi-language models (i = 50256)
-                //fprintf(stderr, "%s: warning: empty-string token in vocab, i = %d\n", __func__, i);
+                //log("%s: warning: empty-string token in vocab, i = %d\n", __func__, i);
                 word = "";
             }
 
@@ -962,14 +994,17 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
         if (vocab.is_multilingual()) {
             vocab.token_eot++;
             vocab.token_sot++;
-            vocab.token_prev++;
+            vocab.token_translate++;
+            vocab.token_transcribe++;
             vocab.token_solm++;
+            vocab.token_prev++;
+            vocab.token_nosp++;
             vocab.token_not++;
             vocab.token_beg++;
         }
 
         if (n_vocab < model.hparams.n_vocab) {
-            fprintf(stderr, "%s: adding %d extra tokens\n", __func__, model.hparams.n_vocab - n_vocab);
+            log("%s: adding %d extra tokens\n", __func__, model.hparams.n_vocab - n_vocab);
             for (int i = n_vocab; i < model.hparams.n_vocab; i++) {
                 if (i > vocab.token_beg) {
                     word = "[_TT_" + std::to_string(i - vocab.token_beg) + "]";
@@ -977,8 +1012,12 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
                     word = "[_EOT_]";
                 } else if (i == vocab.token_sot) {
                     word = "[_SOT_]";
+                } else if (i == vocab.token_solm) {
+                    word = "[_SOLM_]";
                 } else if (i == vocab.token_prev) {
                     word = "[_PREV_]";
+                } else if (i == vocab.token_nosp) {
+                    word = "[_NOSP_]";
                 } else if (i == vocab.token_not) {
                     word = "[_NOT_]";
                 } else if (i == vocab.token_beg) {
@@ -1104,7 +1143,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
 
         ctx_size += (15 + 15*n_audio_layer + 24*n_text_layer)*512; // object overhead
 
-        fprintf(stderr, "%s: model ctx     = %7.2f MB\n", __func__, ctx_size/(1024.0*1024.0));
+        log("%s: model ctx     = %7.2f MB\n", __func__, ctx_size/(1024.0*1024.0));
     }
 
     // create the ggml context
@@ -1117,7 +1156,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
 
         model.ctx = ggml_init(params);
         if (!model.ctx) {
-            fprintf(stderr, "%s: ggml_init() failed\n", __func__);
+            log("%s: ggml_init() failed\n", __func__);
             return false;
         }
     }
@@ -1350,20 +1389,20 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             name.assign(&tmp[0], tmp.size());
 
             if (model.tensors.find(name) == model.tensors.end()) {
-                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.data());
+                log("%s: unknown tensor '%s' in model file\n", __func__, name.data());
                 return false;
             }
 
             auto tensor = model.tensors[name.data()];
             if (ggml_nelements(tensor) != nelements) {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
-                fprintf(stderr, "%s: shape: [%d, %d, %d], expected: [%d, %d, %d]\n",
+                log("%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
+                log("%s: shape: [%d, %d, %d], expected: [%d, %d, %d]\n",
                         __func__, ne[0], ne[1], ne[2], (int) tensor->ne[0], (int) tensor->ne[1], (int) tensor->ne[2]);
                 return false;
             }
 
             if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1] || tensor->ne[2] != ne[2]) {
-                fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%d, %d, %d], expected [%d, %d, %d]\n",
+                log("%s: tensor '%s' has wrong shape in model file: got [%d, %d, %d], expected [%d, %d, %d]\n",
                         __func__, name.data(), (int) tensor->ne[0], (int) tensor->ne[1], (int) tensor->ne[2], ne[0], ne[1], ne[2]);
                 return false;
             }
@@ -1371,7 +1410,7 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             const size_t bpe = ggml_type_size(ggml_type(ttype));
 
             if ((nelements*bpe)/ggml_blck_size(tensor->type) != ggml_nbytes(tensor)) {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file: got %zu, expected %zu\n",
+                log("%s: tensor '%s' has wrong size in model file: got %zu, expected %zu\n",
                         __func__, name.data(), ggml_nbytes(tensor), nelements*bpe);
                 return false;
             }
@@ -1384,12 +1423,12 @@ static bool whisper_model_load(struct whisper_model_loader * loader, whisper_con
             model.n_loaded++;
         }
 
-        fprintf(stderr, "%s: model size    = %7.2f MB\n", __func__, total_size/1024.0/1024.0);
+        log("%s: model size    = %7.2f MB\n", __func__, total_size/1024.0/1024.0);
 
         if (model.n_loaded == 0) {
-            fprintf(stderr, "%s: WARN no tensors loaded from model file - assuming empty model for testing\n", __func__);
+            log("%s: WARN no tensors loaded from model file - assuming empty model for testing\n", __func__);
         } else if (model.n_loaded != (int) model.tensors.size()) {
-            fprintf(stderr, "%s: ERROR not all tensors loaded from model file - expected %zu, got %d\n", __func__, model.tensors.size(), model.n_loaded);
+            log("%s: ERROR not all tensors loaded from model file - expected %zu, got %d\n", __func__, model.tensors.size(), model.n_loaded);
             return false;
         }
     }
@@ -1463,12 +1502,18 @@ static bool whisper_encode_internal(
     const bool use_coreml = wstate.ctx_coreml != nullptr;
 #endif
 
-    if (!use_coreml) {
+#ifndef WHISPER_USE_OPENVINO
+    const bool use_openvino = false;
+#else
+    const bool use_openvino = wstate.ctx_openvino != nullptr;
+#endif
+
+    if (!use_coreml && !use_openvino) {
         // convolution + gelu
         {
             wstate.use_buf(ctx0, 1);
 
-            cur = ggml_conv_1d_1s(ctx0, model.e_conv_1_w, mel);
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_1_w, mel, 1, 1);
             cur = ggml_add(ctx0,
                     ggml_repeat(ctx0,
                         model.e_conv_1_b,
@@ -1479,7 +1524,7 @@ static bool whisper_encode_internal(
 
             wstate.use_buf(ctx0, 0);
 
-            cur = ggml_conv_1d_2s(ctx0, model.e_conv_2_w, cur);
+            cur = ggml_conv_1d_ph(ctx0, model.e_conv_2_w, cur, 2, 1);
             cur = ggml_add(ctx0,
                     ggml_repeat(ctx0,
                         model.e_conv_2_b,
@@ -1762,13 +1807,23 @@ static bool whisper_encode_internal(
         }
     }
 #ifdef WHISPER_USE_COREML
-    else
-    {
+    else if (use_coreml) {
         wstate.use_buf(ctx0, -1);
 
         cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx);
 
         whisper_coreml_encode(wstate.ctx_coreml, (float *) mel->data, (float *) cur->data);
+    }
+#endif
+#ifdef WHISPER_USE_OPENVINO
+    else if (use_openvino) {
+        wstate.use_buf(ctx0, -1);
+
+        cur = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_state, n_ctx);
+
+        if (!whisper_openvino_encode(wstate.ctx_openvino, mel, cur)) {
+            return false;
+        }
     }
 #endif
 
@@ -2577,7 +2632,7 @@ static std::vector<whisper_vocab::id> tokenize(const whisper_vocab & vocab, cons
                 --j;
             }
             if (!found) {
-                fprintf(stderr, "unknown token \n");
+                log("unknown token\n");
                 ++i;
             }
         }
@@ -2613,47 +2668,72 @@ static std::string whisper_get_coreml_path_encoder(std::string path_bin) {
 }
 #endif
 
+#ifdef WHISPER_USE_OPENVINO
+// replace .bin with-encoder-openvino.xml
+static std::string whisper_openvino_get_path_encoder(std::string path_bin) {
+    auto pos = path_bin.rfind('.');
+    if (pos != std::string::npos) {
+        path_bin = path_bin.substr(0, pos);
+    }
+
+    path_bin += "-encoder-openvino.xml";
+
+    return path_bin;
+}
+
+static std::string whisper_openvino_get_path_cache(std::string path_bin) {
+    auto pos = path_bin.rfind('.');
+    if (pos != std::string::npos) {
+        path_bin = path_bin.substr(0, pos);
+    }
+
+    path_bin += "-encoder-openvino-cache";
+
+    return path_bin;
+}
+#endif
+
 struct whisper_state * whisper_init_state(whisper_context * ctx) {
     whisper_state * state = new whisper_state;
 
     const size_t scale = ctx->model.hparams.ftype ? 1 : 2;
 
     if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_SELF.at(ctx->model.type), state->decoders[0].kv_self, ctx->itype, ctx->model.hparams.n_text_ctx)) {
-        fprintf(stderr, "%s: kv_cache_init() failed for self-attention cache\n", __func__);
+        log("%s: kv_cache_init() failed for self-attention cache\n", __func__);
         delete state;
         return nullptr;
     }
 
     {
         const size_t memory_size = ggml_nbytes(state->decoders[0].kv_self.k) + ggml_nbytes(state->decoders[0].kv_self.v);
-        fprintf(stderr, "%s: kv self size  = %7.2f MB\n", __func__, memory_size / 1024.0 / 1024.0);
+        log("%s: kv self size  = %7.2f MB\n", __func__, memory_size / 1024.0 / 1024.0);
     }
 
     if (!kv_cache_init(ctx->model.hparams, scale * MEM_REQ_KV_CROSS.at(ctx->model.type), state->kv_cross, ctx->itype, ctx->model.hparams.n_audio_ctx)) {
-        fprintf(stderr, "%s: kv_cache_init() failed for cross-attention cache\n", __func__);
+        log("%s: kv_cache_init() failed for cross-attention cache\n", __func__);
         delete state;
         return nullptr;
     }
 
     {
         const size_t memory_size = ggml_nbytes(state->kv_cross.k) + ggml_nbytes(state->kv_cross.v);
-        fprintf(stderr, "%s: kv cross size = %7.2f MB\n", __func__, memory_size / 1024.0 / 1024.0);
+        log("%s: kv cross size = %7.2f MB\n", __func__, memory_size / 1024.0 / 1024.0);
     }
 
 #ifdef WHISPER_USE_COREML
     const auto path_coreml = whisper_get_coreml_path_encoder(ctx->path_model);
 
-    fprintf(stderr, "%s: loading Core ML model from '%s'\n", __func__, path_coreml.c_str());
-    fprintf(stderr, "%s: first run on a device may take a while ...\n", __func__);
+    log("%s: loading Core ML model from '%s'\n", __func__, path_coreml.c_str());
+    log("%s: first run on a device may take a while ...\n", __func__);
 
     state->ctx_coreml = whisper_coreml_init(path_coreml.c_str());
     if (!state->ctx_coreml) {
-        fprintf(stderr, "%s: failed to load Core ML model from '%s'\n", __func__, path_coreml.c_str());
+        log("%s: failed to load Core ML model from '%s'\n", __func__, path_coreml.c_str());
 #ifndef WHISPER_COREML_ALLOW_FALLBACK
         return nullptr;
 #endif
     } else {
-        fprintf(stderr, "%s: Core ML model loaded\n", __func__);
+        log("%s: Core ML model loaded\n", __func__);
     }
 #endif
 
@@ -2679,13 +2759,62 @@ struct whisper_state * whisper_init_state(whisper_context * ctx) {
     return state;
 }
 
+int whisper_ctx_init_openvino_encoder(
+        struct whisper_context * ctx,
+                    const char * model_path,
+                    const char * device,
+                    const char * cache_dir) {
+#ifndef WHISPER_USE_OPENVINO
+    (void)(ctx);
+    (void)(model_path);
+    (void)(device);
+    (void)(cache_dir);
+
+    return 1;
+#else
+    if (!model_path && ctx->path_model.empty()) {
+        log("%s: model_path is nullptr, and ctx has no model_path set.\n", __func__);
+        return 1;
+    }
+
+    std::string path_encoder;
+    if (!model_path) {
+        //if model_path is not set, attempt to find it in the same directory as ggml-<model>.bin model
+        path_encoder = whisper_openvino_get_path_encoder(ctx->path_model);
+    } else {
+        path_encoder = model_path;
+    }
+
+    std::string path_cache;
+    if (!cache_dir) {
+        //if cache_dir is not set, set it as a dir residing next to ggml-<model>.bin
+        path_cache = whisper_openvino_get_path_cache(ctx->path_model);
+    } else {
+        path_cache = cache_dir;
+    }
+
+    log("%s: loading OpenVINO model from '%s'\n", __func__, path_encoder.c_str());
+    log("%s: first run on a device may take a while ...\n", __func__);
+
+    ctx->state->ctx_openvino = whisper_openvino_init(path_encoder.c_str(), device, path_cache.c_str());
+    if (!ctx->state->ctx_openvino) {
+        log("%s: failed to init OpenVINO encoder from '%s'\n", __func__, path_encoder.c_str());
+        return 1;
+    } else {
+        log("%s: OpenVINO model loaded\n", __func__);
+    }
+
+    return 0;
+#endif
+}
+
 struct whisper_context * whisper_init_from_file_no_state(const char * path_model) {
 
-    fprintf(stderr, "%s: loading model from '%s'\n", __func__, path_model);
+    log("%s: loading model from '%s'\n", __func__, path_model);
 
     auto fin = std::ifstream(path_model, std::ios::binary);
     if (!fin) {
-        fprintf(stderr, "%s: failed to open '%s'\n", __func__, path_model);
+        log("%s: failed to open '%s'\n", __func__, path_model);
         return nullptr;
     }
 
@@ -2727,7 +2856,7 @@ struct whisper_context * whisper_init_from_buffer_no_state(void * buffer, size_t
 
     buf_context ctx = { reinterpret_cast<uint8_t*>(buffer), buffer_size, 0 };
 
-    fprintf(stderr, "%s: loading model from buffer\n", __func__);
+    log("%s: loading model from buffer\n", __func__);
 
     whisper_model_loader loader = {};
 
@@ -2762,7 +2891,7 @@ struct whisper_context * whisper_init_no_state(struct whisper_model_loader * loa
 
     if (!whisper_model_load(loader, *ctx)) {
         loader->close(loader->context);
-        fprintf(stderr, "%s: failed to load model\n", __func__);
+        log("%s: failed to load model\n", __func__);
         delete ctx;
         return nullptr;
     }
@@ -2833,6 +2962,13 @@ void whisper_free_state(struct whisper_state * state)
         }
 #endif
 
+#ifdef WHISPER_USE_OPENVINO
+        if (state->ctx_openvino != nullptr) {
+            whisper_openvino_free(state->ctx_openvino);
+            state->ctx_openvino = nullptr;
+        }
+#endif
+
         delete state;
     }
 }
@@ -2860,7 +2996,7 @@ void whisper_free_params(struct whisper_full_params * params) {
 
 int whisper_pcm_to_mel_with_state(struct whisper_context * ctx, struct whisper_state * state, const float * samples, int n_samples, int n_threads) {
     if (!log_mel_spectrogram(*state, samples, n_samples, WHISPER_SAMPLE_RATE, WHISPER_N_FFT, WHISPER_HOP_LENGTH, WHISPER_N_MEL, n_threads, ctx->model.filters, false, state->mel)) {
-        fprintf(stderr, "%s: failed to compute mel spectrogram\n", __func__);
+        log("%s: failed to compute mel spectrogram\n", __func__);
         return -1;
     }
 
@@ -2874,7 +3010,7 @@ int whisper_pcm_to_mel(struct whisper_context * ctx, const float * samples, int 
 // same as whisper_pcm_to_mel, but applies a Phase Vocoder to speed up the audio x2
 int whisper_pcm_to_mel_phase_vocoder_with_state(struct whisper_context * ctx, struct whisper_state * state, const float * samples, int n_samples, int n_threads) {
     if (!log_mel_spectrogram(*state, samples, n_samples, WHISPER_SAMPLE_RATE, 2 * WHISPER_N_FFT, 2 * WHISPER_HOP_LENGTH, WHISPER_N_MEL, n_threads, ctx->model.filters, true, state->mel)) {
-        fprintf(stderr, "%s: failed to compute mel spectrogram\n", __func__);
+        log("%s: failed to compute mel spectrogram\n", __func__);
         return -1;
     }
 
@@ -2893,7 +3029,7 @@ int whisper_set_mel_with_state(
                            int   n_len,
                            int   n_mel) {
     if (n_mel != WHISPER_N_MEL) {
-        fprintf(stderr, "%s: invalid number of mel bands: %d (expected %d)\n", __func__, n_mel, WHISPER_N_MEL);
+        log("%s: invalid number of mel bands: %d (expected %d)\n", __func__, n_mel, WHISPER_N_MEL);
         return -1;
     }
 
@@ -2917,7 +3053,7 @@ int whisper_set_mel(
 
 int whisper_encode_with_state(struct whisper_context * ctx, struct whisper_state * state, int offset, int n_threads) {
     if (!whisper_encode_internal(*ctx, *state, offset, n_threads)) {
-        fprintf(stderr, "%s: failed to eval\n", __func__);
+        log("%s: failed to eval\n", __func__);
         return -1;
     }
 
@@ -2926,7 +3062,7 @@ int whisper_encode_with_state(struct whisper_context * ctx, struct whisper_state
 
 int whisper_encode(struct whisper_context * ctx, int offset, int n_threads) {
     if (!whisper_encode_internal(*ctx, *ctx->state, offset, n_threads)) {
-        fprintf(stderr, "%s: failed to eval\n", __func__);
+        log("%s: failed to eval\n", __func__);
         return -1;
     }
 
@@ -2937,7 +3073,7 @@ int whisper_decode_with_state(struct whisper_context * ctx, struct whisper_state
     const int selected_decoder_id = 0;
 
     if (!whisper_decode_internal(*ctx, *state, state->decoders[selected_decoder_id], tokens, n_tokens, n_past, n_threads)) {
-        fprintf(stderr, "%s: failed to eval\n", __func__);
+        log("%s: failed to eval\n", __func__);
         return 1;
     }
 
@@ -2949,13 +3085,13 @@ int whisper_decode(struct whisper_context * ctx, const whisper_token * tokens, i
     const int selected_decoder_id = 0;
 
     if (ctx->state == nullptr) {
-        fprintf(stderr, "%s: ERROR state was not loaded.\n", __func__);
+        log("%s: ERROR state was not loaded.\n", __func__);
         return false;
     }
 
 
     if (!whisper_decode_internal(*ctx, *ctx->state, ctx->state->decoders[selected_decoder_id], tokens, n_tokens, n_past, n_threads)) {
-        fprintf(stderr, "%s: failed to eval\n", __func__);
+        log("%s: failed to eval\n", __func__);
         return 1;
     }
 
@@ -2966,7 +3102,7 @@ int whisper_tokenize(struct whisper_context * ctx, const char * text, whisper_to
     const auto res = tokenize(ctx->vocab, text);
 
     if (n_max_tokens < (int) res.size()) {
-        fprintf(stderr, "%s: too many resulting tokens: %d (max %d)\n", __func__, (int) res.size(), n_max_tokens);
+        log("%s: too many resulting tokens: %d (max %d)\n", __func__, (int) res.size(), n_max_tokens);
         return -1;
     }
 
@@ -2994,7 +3130,7 @@ int whisper_lang_id(const char * lang) {
             }
         }
 
-        fprintf(stderr, "%s: unknown language '%s'\n", __func__, lang);
+        log("%s: unknown language '%s'\n", __func__, lang);
         return -1;
     }
     return g_lang.at(lang).first;
@@ -3007,7 +3143,7 @@ const char * whisper_lang_str(int id) {
         }
     }
 
-    fprintf(stderr, "%s: unknown language id %d\n", __func__, id);
+    log("%s: unknown language id %d\n", __func__, id);
     return nullptr;
 }
 
@@ -3020,25 +3156,25 @@ int whisper_lang_auto_detect_with_state(
     const int seek = offset_ms/10;
 
     if (seek < 0) {
-        fprintf(stderr, "%s: offset %dms is before the start of the audio\n", __func__, offset_ms);
+        log("%s: offset %dms is before the start of the audio\n", __func__, offset_ms);
         return -1;
     }
 
     if (seek >= state->mel.n_len_org) {
-        fprintf(stderr, "%s: offset %dms is past the end of the audio (%dms)\n", __func__, offset_ms, state->mel.n_len_org*10);
+        log("%s: offset %dms is past the end of the audio (%dms)\n", __func__, offset_ms, state->mel.n_len_org*10);
         return -2;
     }
 
     // run the encoder
     if (whisper_encode_with_state(ctx, state, seek, n_threads) != 0) {
-        fprintf(stderr, "%s: failed to encode\n", __func__);
+        log("%s: failed to encode\n", __func__);
         return -6;
     }
 
     const std::vector<whisper_token> prompt = { whisper_token_sot(ctx) };
 
     if (whisper_decode_with_state(ctx, state, prompt.data(), prompt.size(), 0, n_threads) != 0) {
-        fprintf(stderr, "%s: failed to decode\n", __func__);
+        log("%s: failed to decode\n", __func__);
         return -7;
     }
 
@@ -3204,12 +3340,16 @@ whisper_token whisper_token_sot(struct whisper_context * ctx) {
     return ctx->vocab.token_sot;
 }
 
+whisper_token whisper_token_solm(struct whisper_context * ctx) {
+    return ctx->vocab.token_solm;
+}
+
 whisper_token whisper_token_prev(struct whisper_context * ctx) {
     return ctx->vocab.token_prev;
 }
 
-whisper_token whisper_token_solm(struct whisper_context * ctx) {
-    return ctx->vocab.token_solm;
+whisper_token whisper_token_nosp(struct whisper_context * ctx) {
+    return ctx->vocab.token_nosp;
 }
 
 whisper_token whisper_token_not(struct whisper_context * ctx) {
@@ -3224,32 +3364,32 @@ whisper_token whisper_token_lang(struct whisper_context * ctx, int lang_id) {
     return whisper_token_sot(ctx) + 1 + lang_id;
 }
 
-whisper_token whisper_token_translate(void) {
-    return whisper_vocab::token_translate;
+whisper_token whisper_token_translate(struct whisper_context * ctx) {
+    return ctx->vocab.token_translate;
 }
 
-whisper_token whisper_token_transcribe(void) {
-    return whisper_vocab::token_transcribe;
+whisper_token whisper_token_transcribe(struct whisper_context * ctx) {
+    return ctx->vocab.token_transcribe;
 }
 
 void whisper_print_timings(struct whisper_context * ctx) {
     const int64_t t_end_us = ggml_time_us();
 
-    fprintf(stderr, "\n");
-    fprintf(stderr, "%s:     load time = %8.2f ms\n", __func__, ctx->t_load_us / 1000.0f);
+    log("\n");
+    log("%s:     load time = %8.2f ms\n", __func__, ctx->t_load_us / 1000.0f);
     if (ctx->state != nullptr) {
 
         const int32_t n_sample = std::max(1, ctx->state->n_sample);
         const int32_t n_encode = std::max(1, ctx->state->n_encode);
         const int32_t n_decode = std::max(1, ctx->state->n_decode);
 
-        fprintf(stderr, "%s:     fallbacks = %3d p / %3d h\n", __func__, ctx->state->n_fail_p, ctx->state->n_fail_h);
-        fprintf(stderr, "%s:      mel time = %8.2f ms\n", __func__, ctx->state->t_mel_us / 1000.0f);
-        fprintf(stderr, "%s:   sample time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_sample_us, n_sample, 1e-3f * ctx->state->t_sample_us / n_sample);
-        fprintf(stderr, "%s:   encode time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_encode_us, n_encode, 1e-3f * ctx->state->t_encode_us / n_encode);
-        fprintf(stderr, "%s:   decode time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_decode_us, n_decode, 1e-3f * ctx->state->t_decode_us / n_decode);
+        log("%s:     fallbacks = %3d p / %3d h\n", __func__, ctx->state->n_fail_p, ctx->state->n_fail_h);
+        log("%s:      mel time = %8.2f ms\n", __func__, ctx->state->t_mel_us / 1000.0f);
+        log("%s:   sample time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_sample_us, n_sample, 1e-3f * ctx->state->t_sample_us / n_sample);
+        log("%s:   encode time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_encode_us, n_encode, 1e-3f * ctx->state->t_encode_us / n_encode);
+        log("%s:   decode time = %8.2f ms / %5d runs (%8.2f ms per run)\n", __func__, 1e-3f * ctx->state->t_decode_us, n_decode, 1e-3f * ctx->state->t_decode_us / n_decode);
     }
-    fprintf(stderr, "%s:    total time = %8.2f ms\n", __func__, (t_end_us - ctx->t_start_us)/1000.0f);
+    log("%s:    total time = %8.2f ms\n", __func__, (t_end_us - ctx->t_start_us)/1000.0f);
 }
 
 void whisper_reset_timings(struct whisper_context * ctx) {
@@ -3262,6 +3402,14 @@ void whisper_reset_timings(struct whisper_context * ctx) {
 
 static int whisper_has_coreml(void) {
 #ifdef WHISPER_USE_COREML
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static int whisper_has_openvino(void) {
+#ifdef WHISPER_USE_OPENVINO
     return 1;
 #else
     return 0;
@@ -3285,6 +3433,7 @@ const char * whisper_print_system_info(void) {
     s += "SSE3 = "      + std::to_string(ggml_cpu_has_sse3())      + " | ";
     s += "VSX = "       + std::to_string(ggml_cpu_has_vsx())       + " | ";
     s += "COREML = "    + std::to_string(whisper_has_coreml())     + " | ";
+    s += "OPENVINO = "  + std::to_string(whisper_has_openvino())   + " | ";
 
     return s.c_str();
 }
@@ -3301,51 +3450,53 @@ struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sam
 
 struct whisper_full_params whisper_full_default_params(enum whisper_sampling_strategy strategy) {
     struct whisper_full_params result = {
-        /*.strategy         =*/ strategy,
+        /*.strategy          =*/ strategy,
 
-        /*.n_threads        =*/ std::min(4, (int32_t) std::thread::hardware_concurrency()),
-        /*.n_max_text_ctx   =*/ 16384,
-        /*.offset_ms        =*/ 0,
-        /*.duration_ms      =*/ 0,
+        /*.n_threads         =*/ std::min(4, (int32_t) std::thread::hardware_concurrency()),
+        /*.n_max_text_ctx    =*/ 16384,
+        /*.offset_ms         =*/ 0,
+        /*.duration_ms       =*/ 0,
 
-        /*.translate        =*/ false,
-        /*.no_context       =*/ true,
-        /*.single_segment   =*/ false,
-        /*.print_special    =*/ false,
-        /*.print_progress   =*/ true,
-        /*.print_realtime   =*/ false,
-        /*.print_timestamps =*/ true,
+        /*.translate         =*/ false,
+        /*.no_context        =*/ true,
+        /*.single_segment    =*/ false,
+        /*.print_special     =*/ false,
+        /*.print_progress    =*/ true,
+        /*.print_realtime    =*/ false,
+        /*.print_timestamps  =*/ true,
 
-        /*.token_timestamps =*/ false,
-        /*.thold_pt         =*/ 0.01f,
-        /*.thold_ptsum      =*/ 0.01f,
-        /*.max_len          =*/ 0,
-        /*.split_on_word    =*/ false,
-        /*.max_tokens       =*/ 0,
+        /*.token_timestamps  =*/ false,
+        /*.thold_pt          =*/ 0.01f,
+        /*.thold_ptsum       =*/ 0.01f,
+        /*.max_len           =*/ 0,
+        /*.split_on_word     =*/ false,
+        /*.max_tokens        =*/ 0,
 
-        /*.speed_up         =*/ false,
-        /*.audio_ctx        =*/ 0,
+        /*.speed_up          =*/ false,
+        /*.audio_ctx         =*/ 0,
 
-        /*.initial_prompt   =*/ nullptr,
-        /*.prompt_tokens    =*/ nullptr,
-        /*.prompt_n_tokens  =*/ 0,
+        /*.tdrz_enable       =*/ false,
 
-        /*.language         =*/ "en",
-        /*.detect_language  =*/ false,
+        /*.initial_prompt    =*/ nullptr,
+        /*.prompt_tokens     =*/ nullptr,
+        /*.prompt_n_tokens   =*/ 0,
 
-        /*.suppress_blank   =*/ true,
+        /*.language          =*/ "en",
+        /*.detect_language   =*/ false,
+
+        /*.suppress_blank    =*/ true,
         /*.suppress_non_speech_tokens =*/ false,
 
-        /*.temperature      =*/  0.0f,
-        /*.max_initial_ts   =*/  1.0f,
-        /*.length_penalty   =*/ -1.0f,
+        /*.temperature       =*/  0.0f,
+        /*.max_initial_ts    =*/  1.0f,
+        /*.length_penalty    =*/ -1.0f,
 
-        /*.temperature_inc  =*/  0.4f,
-        /*.entropy_thold    =*/  2.4f,
-        /*.logprob_thold    =*/ -1.0f,
-        /*.no_speech_thold  =*/  0.6f,
+        /*.temperature_inc   =*/  0.4f,
+        /*.entropy_thold     =*/  2.4f,
+        /*.logprob_thold     =*/ -1.0f,
+        /*.no_speech_thold   =*/  0.6f,
 
-        /*.greedy           =*/ {
+        /*.greedy            =*/ {
             /*.best_of   =*/ -1,
         },
 
@@ -3397,26 +3548,6 @@ static void whisper_exp_compute_token_level_timestamps(
                          float   thold_pt,
                          float   thold_ptsum);
 
-// trim from start (in place)
-static inline void ltrim(std::string &s) {
-    s.erase(s.begin(), std::find_if_not(s.begin(), s.end(), [](unsigned char ch) {
-        return std::isspace(ch);
-    }));
-}
-
-// trim from end (in place)
-static inline void rtrim(std::string &s) {
-    s.erase(std::find_if_not(s.rbegin(), s.rend(), [](unsigned char ch) {
-        return std::isspace(ch);
-    }).base(), s.end());
-}
-
-// trim from both ends (in place)
-static inline void trim(std::string &s) {
-    rtrim(s);
-    ltrim(s);
-}
-
 static inline bool should_split_on_word(const char * txt, bool split_on_word) {
     if (!split_on_word) return true;
 
@@ -3443,14 +3574,10 @@ static int whisper_wrap_segment(struct whisper_context & ctx, struct whisper_sta
         const int cur = strlen(txt);
 
         if (acc + cur > max_len && i > 0 && should_split_on_word(txt, split_on_word)) {
-            // split here
-            if (split_on_word) {
-                trim(text);
-            }
-
             state.result_all.back().text = std::move(text);
             state.result_all.back().t1 = token.t0;
             state.result_all.back().tokens.resize(i);
+            state.result_all.back().speaker_turn_next = false;
 
             state.result_all.push_back({});
             state.result_all.back().t0 = token.t0;
@@ -3461,6 +3588,8 @@ static int whisper_wrap_segment(struct whisper_context & ctx, struct whisper_sta
                 state.result_all.back().tokens.end(),
                     segment.tokens.begin() + i,
                     segment.tokens.end());
+
+            state.result_all.back().speaker_turn_next = segment.speaker_turn_next;
 
             acc = 0;
             text = "";
@@ -3475,9 +3604,6 @@ static int whisper_wrap_segment(struct whisper_context & ctx, struct whisper_sta
         }
     }
 
-    if (split_on_word) {
-        trim(text);
-    }
     state.result_all.back().text = std::move(text);
 
     return res;
@@ -3543,9 +3669,14 @@ static void whisper_process_logits(
         // ref: https://github.com/openai/whisper/blob/0b1ba3d46ebf7fe6f953acfd8cad62a4f851b49f/whisper/decoding.py#L410-L412
         logits[vocab.token_not] = -INFINITY;
 
-        // suppress sot and solm tokens
+        // suppress sot and nosp tokens
         logits[vocab.token_sot]  = -INFINITY;
-        logits[vocab.token_solm] = -INFINITY;
+        logits[vocab.token_nosp] = -INFINITY; // TODO: ignore this token for now
+
+        // [TDRZ] when tinydiarize is disabled, suppress solm token
+        if (params.tdrz_enable == false) {
+            logits[vocab.token_solm] = -INFINITY;
+        }
 
         // suppress task tokens
         logits[vocab.token_translate]  = -INFINITY;
@@ -3582,7 +3713,7 @@ static void whisper_process_logits(
             const bool last_was_timestamp        = tokens_cur.size() > 0 && tokens_cur.back().id >= vocab.token_beg;
             const bool penultimate_was_timestamp = tokens_cur.size() < 2 || tokens_cur[tokens_cur.size() - 2].id >= vocab.token_beg;
 
-            //fprintf(stderr, "last_was_timestamp=%d penultimate_was_timestamp=%d\n", last_was_timestamp, penultimate_was_timestamp);
+            //log("last_was_timestamp=%d penultimate_was_timestamp=%d\n", last_was_timestamp, penultimate_was_timestamp);
 
             if (last_was_timestamp) {
                 if (penultimate_was_timestamp) {
@@ -3658,7 +3789,7 @@ static void whisper_process_logits(
 
             const float max_text_token_logprob = *std::max_element(logprobs.begin(), logprobs.begin() + vocab.token_beg);
 
-            //fprintf(stderr, "timestamp_logprob=%f max_text_token_logprob=%f\n", timestamp_logprob, max_text_token_logprob);
+            //log("timestamp_logprob=%f max_text_token_logprob=%f\n", timestamp_logprob, max_text_token_logprob);
 
             if (timestamp_logprob > max_text_token_logprob) {
                 for (int i = 0; i < vocab.token_beg; ++i) {
@@ -3907,12 +4038,12 @@ int whisper_full_with_state(
     // compute log mel spectrogram
     if (params.speed_up) {
         if (whisper_pcm_to_mel_phase_vocoder_with_state(ctx, state, samples, n_samples, params.n_threads) != 0) {
-            fprintf(stderr, "%s: failed to compute log mel spectrogram\n", __func__);
+            log("%s: failed to compute log mel spectrogram\n", __func__);
             return -1;
         }
     } else {
         if (whisper_pcm_to_mel_with_state(ctx, state, samples, n_samples, params.n_threads) != 0) {
-            fprintf(stderr, "%s: failed to compute log mel spectrogram\n", __func__);
+            log("%s: failed to compute log mel spectrogram\n", __func__);
             return -2;
         }
     }
@@ -3923,13 +4054,13 @@ int whisper_full_with_state(
 
         const auto lang_id = whisper_lang_auto_detect_with_state(ctx, state, 0, params.n_threads, probs.data());
         if (lang_id < 0) {
-            fprintf(stderr, "%s: failed to auto-detect language\n", __func__);
+            log("%s: failed to auto-detect language\n", __func__);
             return -3;
         }
         state->lang_id = lang_id;
         params.language = whisper_lang_str(lang_id);
 
-        fprintf(stderr, "%s: auto-detected language: %s (p = %f)\n", __func__, params.language, probs[whisper_lang_id(params.language)]);
+        log("%s: auto-detected language: %s (p = %f)\n", __func__, params.language, probs[whisper_lang_id(params.language)]);
         if (params.detect_language) {
             return 0;
         }
@@ -3986,7 +4117,7 @@ int whisper_full_with_state(
         if (decoder.kv_self.ctx == nullptr) {
             decoder.kv_self = state->decoders[0].kv_self;
             if (!kv_cache_reinit(decoder.kv_self)) {
-                fprintf(stderr, "%s: kv_cache_reinit() failed for self-attention, decoder %d\n", __func__, j);
+                log("%s: kv_cache_reinit() failed for self-attention, decoder %d\n", __func__, j);
                 return -4;
             }
 
@@ -4030,7 +4161,7 @@ int whisper_full_with_state(
 
     // overwrite audio_ctx, max allowed is hparams.n_audio_ctx
     if (params.audio_ctx > whisper_n_audio_ctx(ctx)) {
-        fprintf(stderr, "%s: audio_ctx is larger than the maximum allowed (%d > %d)\n", __func__, params.audio_ctx, whisper_n_audio_ctx(ctx));
+        log("%s: audio_ctx is larger than the maximum allowed (%d > %d)\n", __func__, params.audio_ctx, whisper_n_audio_ctx(ctx));
         return -5;
     }
     state->exp_n_audio_ctx = params.audio_ctx;
@@ -4042,14 +4173,11 @@ int whisper_full_with_state(
         state->lang_id = lang_id;
         prompt_init.push_back(whisper_token_lang(ctx, lang_id));
         if (params.translate) {
-            prompt_init.push_back(whisper_token_translate());
+            prompt_init.push_back(whisper_token_translate(ctx));
         } else {
-            prompt_init.push_back(whisper_token_transcribe());
+            prompt_init.push_back(whisper_token_transcribe(ctx));
         }
     }
-
-    int progress_prev = 0;
-    int progress_step = 5;
 
     int seek = seek_start;
 
@@ -4077,16 +4205,11 @@ int whisper_full_with_state(
 
     // main loop
     while (true) {
-        const int progress_cur = (100*(seek - seek_start))/(seek_end - seek_start);
-        while (progress_cur >= progress_prev + progress_step) {
-            progress_prev += progress_step;
-            if (params.print_progress) {
-                fprintf(stderr, "%s: progress = %3d%%\n", __func__, progress_prev);
-            }
-        }
         if (params.progress_callback) {
+            const int progress_cur = (100*(seek - seek_start))/(seek_end - seek_start);
+          
             params.progress_callback(
-                ctx, ctx->state, progress_prev, params.progress_callback_user_data);
+                ctx, ctx->state, progress_cur, params.progress_callback_user_data);
         }
 
         // of only 1 second left, then stop
@@ -4096,14 +4219,14 @@ int whisper_full_with_state(
 
         if (params.encoder_begin_callback) {
             if (params.encoder_begin_callback(ctx, state, params.encoder_begin_callback_user_data) == false) {
-                fprintf(stderr, "%s: encoder_begin_callback returned false - aborting\n", __func__);
+                log("%s: encoder_begin_callback returned false - aborting\n", __func__);
                 break;
             }
         }
 
         // encode audio features starting at offset seek
         if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads)) {
-            fprintf(stderr, "%s: failed to encode\n", __func__);
+            log("%s: failed to encode\n", __func__);
             return -6;
         }
 
@@ -4186,7 +4309,7 @@ int whisper_full_with_state(
                 WHISPER_PRINT_DEBUG("\n\n");
 
                 if (!whisper_decode_internal(*ctx, *state, state->decoders[0], prompt.data(), prompt.size(), 0, params.n_threads)) {
-                    fprintf(stderr, "%s: failed to decode\n", __func__);
+                    log("%s: failed to decode\n", __func__);
                     return -7;
                 }
 
@@ -4424,7 +4547,7 @@ int whisper_full_with_state(
                     //WHISPER_PRINT_DEBUG("%s: decoder %d: token %d, kv_self.n %d, seek_delta %d\n", __func__, j, decoder.tokens_tmp[0], decoder.kv_self.n, decoder.seek_delta);
 
                     if (!whisper_decode_internal(*ctx, *state, decoder, decoder.tokens_tmp.data(), decoder.tokens_tmp.size(), decoder.kv_self.n, params.n_threads)) {
-                        fprintf(stderr, "%s: failed to decode\n", __func__);
+                        log("%s: failed to decode\n", __func__);
                         return -8;
                     }
 
@@ -4524,21 +4647,25 @@ int whisper_full_with_state(
                 prompt_past.push_back(tokens_cur[i].id);
             }
 
-            // store the text from this iteration
             if (!tokens_cur.empty() && ctx->model.n_loaded > 0) {
                 int  i0 = 0;
                 auto t0 = seek + 2*(tokens_cur.front().tid - whisper_token_beg(ctx));
 
                 std::string text;
+                bool speaker_turn_next = false;
 
                 for (int i = 0; i < (int) tokens_cur.size(); i++) {
                     //printf("%s: %18s %6.3f %18s %6.3f\n", __func__,
                     //        ctx->vocab.id_to_token[tokens_cur[i].id].c_str(), tokens_cur[i].p,
                     //        ctx->vocab.id_to_token[tokens_cur[i].tid].c_str(), tokens_cur[i].pt);
 
-                    if (params.print_special == false && tokens_cur[i].id >= whisper_token_eot(ctx)) {
-                    } else {
+                    if (params.print_special || tokens_cur[i].id < whisper_token_eot(ctx)) {
                         text += whisper_token_to_str(ctx, tokens_cur[i].id);
+                    }
+
+                    // [TDRZ] record if speaker turn was predicted after current segment
+                    if (params.tdrz_enable && tokens_cur[i].id == whisper_token_solm(ctx)) {
+                        speaker_turn_next = true;
                     }
 
                     if (tokens_cur[i].id > whisper_token_beg(ctx) && !params.single_segment) {
@@ -4559,7 +4686,7 @@ int whisper_full_with_state(
 
                             //printf("tt0 = %d, tt1 = %d, text = %s, token = %s, token_id = %d, tid = %d\n", tt0, tt1, text.c_str(), ctx->vocab.id_to_token[tokens_cur[i].id].c_str(), tokens_cur[i].id, tokens_cur[i].tid);
 
-                            result_all.push_back({ tt0, tt1, text, {} });
+                            result_all.push_back({ tt0, tt1, text, {}, speaker_turn_next });
                             for (int j = i0; j <= i; j++) {
                                 result_all.back().tokens.push_back(tokens_cur[j]);
                             }
@@ -4585,6 +4712,7 @@ int whisper_full_with_state(
                         i--;
                         t0 = t1;
                         i0 = i + 1;
+                        speaker_turn_next = false;
                     }
                 }
 
@@ -4603,7 +4731,7 @@ int whisper_full_with_state(
                         }
                     }
 
-                    result_all.push_back({ tt0, tt1, text, {} });
+                    result_all.push_back({ tt0, tt1, text, {} , speaker_turn_next });
                     for (int j = i0; j < (int) tokens_cur.size(); j++) {
                         result_all.back().tokens.push_back(tokens_cur[j]);
                     }
@@ -4741,12 +4869,12 @@ int whisper_full_parallel(
     ctx->state->t_decode_us /= n_processors;
 
     // print information about the audio boundaries
-    fprintf(stderr, "\n");
-    fprintf(stderr, "%s: the audio has been split into %d chunks at the following times:\n", __func__, n_processors);
+    log("\n");
+    log("%s: the audio has been split into %d chunks at the following times:\n", __func__, n_processors);
     for (int i = 0; i < n_processors - 1; ++i) {
-        fprintf(stderr, "%s: split %d - %s\n", __func__, (i + 1), to_timestamp(100*((i + 1)*n_samples_per_processor)/WHISPER_SAMPLE_RATE + offset_t).c_str());
+        log("%s: split %d - %s\n", __func__, (i + 1), to_timestamp(100*((i + 1)*n_samples_per_processor)/WHISPER_SAMPLE_RATE + offset_t).c_str());
     }
-    fprintf(stderr, "%s: the transcription quality may be degraded near these boundaries\n", __func__);
+    log("%s: the transcription quality may be degraded near these boundaries\n", __func__);
 
     return ret;
 }
@@ -4781,6 +4909,10 @@ int64_t whisper_full_get_segment_t1_from_state(struct whisper_state * state, int
 
 int64_t whisper_full_get_segment_t1(struct whisper_context * ctx, int i_segment) {
     return ctx->state->result_all[i_segment].t1;
+}
+
+bool whisper_full_get_segment_speaker_turn_next(struct whisper_context * ctx, int i_segment) {
+    return ctx->state->result_all[i_segment].speaker_turn_next;
 }
 
 const char * whisper_full_get_segment_text_from_state(struct whisper_state * state, int i_segment) {
@@ -5102,7 +5234,7 @@ static void whisper_exp_compute_token_level_timestamps(
     const int n_samples = state.energy.size();
 
     if (n_samples == 0) {
-        fprintf(stderr, "%s: no signal data available\n", __func__);
+        log("%s: no signal data available\n", __func__);
         return;
     }
 
@@ -5321,4 +5453,8 @@ static void whisper_exp_compute_token_level_timestamps(
     //        continue;
     //    }
     //}
+}
+
+void whisper_set_log_callback(whisper_log_callback callback) {
+    whisper_log = callback;
 }
