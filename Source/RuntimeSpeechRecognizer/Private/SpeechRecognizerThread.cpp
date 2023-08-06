@@ -220,7 +220,12 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 FSpeechRecognizerThread::FSpeechRecognizerThread()
 	: bIsStopped(true)
 , bIsFinished(true)
-{}
+{
+	whisper_set_log_callback([](const char* Line)
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("%s"), *FString(Line));
+	});
+}
 
 FSpeechRecognizerThread::~FSpeechRecognizerThread()
 {
