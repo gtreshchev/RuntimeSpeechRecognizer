@@ -93,7 +93,10 @@ static int sched_yield (void) {
 }
 #else
 #include <pthread.h>
-#include <stdatomic.h>
+#include <atomic>
+
+typedef std::atomic<int> atomic_int;
+typedef std::atomic<bool> atomic_bool;
 
 typedef void* thread_ret_t;
 
@@ -311,7 +314,7 @@ typedef double ggml_float;
 #define GGML_COMPUTE_FP32_TO_FP16(x) _mm_extract_epi16(_mm_cvtps_ph(_mm_set_ss(x), 0), 0)
 #else
 #define GGML_COMPUTE_FP16_TO_FP32(x) _cvtsh_ss(x)
-#define GGML_COMPUTE_FP32_TO_FP16(x) _cvtss_sh(x, 0)
+#define GGML_COMPUTE_FP32_TO_FP16(x) _cvtss_sh((float)x, 0)
 #endif
 
 #elif defined(__POWER9_VECTOR__)
@@ -3997,7 +4000,7 @@ struct ggml_state {
 
 // global state
 static struct ggml_state g_state;
-static atomic_int g_state_barrier = 0;
+static atomic_int g_state_barrier(0);
 
 // barrier via spin lock
 inline static void ggml_critical_section_start(void) {
@@ -16454,6 +16457,14 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     return 0;
 }
 
+#ifdef _WIN32
+#define ATOMIC_INT_INIT(value) (value)
+#define ATOMIC_BOOL_INIT(value) (value)
+#else
+#define ATOMIC_INT_INIT(value) {value}
+#define ATOMIC_BOOL_INIT(value) {value}
+#endif
+
 void ggml_graph_compute(struct ggml_context * ctx, struct ggml_cgraph * cgraph) {
     const int n_threads = cgraph->n_threads;
 
@@ -16462,8 +16473,8 @@ void ggml_graph_compute(struct ggml_context * ctx, struct ggml_cgraph * cgraph) 
         /*.perf_node_start_cycles  =*/ 0,
         /*.perf_node_start_time_us =*/ 0,
         /*.n_threads               =*/ n_threads,
-        /*.n_active                =*/ n_threads,
-        /*.node_n                  =*/ -1,
+        /*.n_active                =*/ ATOMIC_INT_INIT(n_threads),
+        /*.node_n                  =*/ ATOMIC_INT_INIT(-1),
     };
     struct ggml_compute_state * workers = (ggml_compute_state*)alloca(sizeof(struct ggml_compute_state)*n_threads);
 
