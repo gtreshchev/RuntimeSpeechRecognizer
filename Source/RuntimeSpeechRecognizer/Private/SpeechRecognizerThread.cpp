@@ -160,7 +160,7 @@ void FSpeechRecognitionParameters::SetNonStreamingDefaults()
 	bSingleSegment = false;
 	MaxTokens = 0;
 	AudioContextSize = 0;
-	TemperatureToIncrease = 0.2f;
+	TemperatureToIncrease = 0.4f;
 }
 
 void FSpeechRecognitionParameters::SetStreamingDefaults()
@@ -190,12 +190,15 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 	WhisperState.WhisperParameters->max_tokens = MaxTokens;
 	WhisperState.WhisperParameters->audio_ctx = AudioContextSize;
 	WhisperState.WhisperParameters->temperature_inc = TemperatureToIncrease;
+	WhisperState.WhisperParameters->entropy_thold = EntropyThreshold;
 
 	WhisperState.WhisperParameters->language = EnumToString(Language);
 	WhisperState.WhisperParameters->n_threads = NumOfThreads > 0 ? NumOfThreads : (FPlatformProcess::SupportsMultithreading() ? FMath::Min(6, FPlatformMisc::NumberOfCoresIncludingHyperthreads()) : 1);
 
 	WhisperState.WhisperParameters->suppress_blank = bSuppressBlank;
 	WhisperState.WhisperParameters->suppress_non_speech_tokens = bSuppressNonSpeechTokens;
+
+	WhisperState.WhisperParameters->beam_search.beam_size = BeamSize;
 
 	WhisperState.WhisperParameters->speed_up = bSpeedUp;
 
@@ -700,6 +703,18 @@ bool FSpeechRecognizerThread::SetTemperatureToIncrease(float Value)
 	return true;
 }
 
+bool FSpeechRecognizerThread::SetEntropyThreshold(float Value)
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set entropy threshold while the thread is running"));
+		return false;
+	}
+
+	RecognitionParameters.EntropyThreshold = Value;
+	return true;
+}
+
 bool FSpeechRecognizerThread::SetSuppressBlank(bool Value)
 {
 	if (!GetIsStopped())
@@ -721,6 +736,18 @@ bool FSpeechRecognizerThread::SetSuppressNonSpeechTokens(bool Value)
 	}
 
 	RecognitionParameters.bSuppressNonSpeechTokens = Value;
+	return true;
+}
+
+bool FSpeechRecognizerThread::SetBeamSize(int32 Value)
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set beam size while the thread is running"));
+		return false;
+	}
+
+	RecognitionParameters.BeamSize = Value;
 	return true;
 }
 

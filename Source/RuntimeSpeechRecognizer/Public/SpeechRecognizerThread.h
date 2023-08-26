@@ -122,7 +122,11 @@ struct FSpeechRecognitionParameters
 
 	/** The temperature to increase when falling back when the decoding fails to meet either of the thresholds below */
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
-	float TemperatureToIncrease = 0.2f;
+	float TemperatureToIncrease = 0.4f;
+
+	/** If the compression ratio is higher than this value, treat the decoding as failed. Similar to OpenAI's "compression_ratio_threshold" */
+	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
+	float EntropyThreshold = 2.4f;
 
 	/** Whether to suppress blanks showing up in outputs */
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
@@ -131,6 +135,10 @@ struct FSpeechRecognitionParameters
 	/** Whether to suppress non speech tokens in outputs */
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
 	bool bSuppressNonSpeechTokens = false;
+	
+	/** Number of beams in beam search, only applicable when temperature is zero */
+	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
+	int32 BeamSize = -1.f;
 
 	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
@@ -342,6 +350,16 @@ public:
 	bool SetTemperatureToIncrease(float Value);
 
 	/**
+	 * Sets the entropy threshold
+	 * If the compression ratio is higher than this value, treat the decoding as failed. Similar to OpenAI's "compression_ratio_threshold"
+	 *
+	 * @param Value The entropy threshold
+	 * @return True if the setting was set successfully, false otherwise
+	 * @note Can only be called when the thread is stopped
+	 */
+	bool SetEntropyThreshold(float Value);
+
+	/**
 	 * Sets whether to suppress blanks showing up in outputs
 	 *
 	 * @param Value Whether to suppress blanks showing up in outputs
@@ -360,6 +378,14 @@ public:
 	 * @author https://github.com/amartinz
 	 */
 	bool SetSuppressNonSpeechTokens(bool Value);
+
+	/**
+	 * Set the number of beams in beam search. Only applicable when temperature is zero
+	 * 
+	 * @param Value The number of beams in beam search
+	 * @return True if the setting was set successfully, false otherwise
+	 */
+	bool SetBeamSize(int32 Value);
 
 private:
 	/**

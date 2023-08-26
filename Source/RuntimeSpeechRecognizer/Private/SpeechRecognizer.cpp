@@ -144,6 +144,11 @@ bool USpeechRecognizer::SetTemperatureToIncrease(float Value)
 	return Thread->SetTemperatureToIncrease(Value);
 }
 
+bool USpeechRecognizer::SetEntropyThreshold(float Value)
+{
+	return Thread->SetEntropyThreshold(Value);
+}
+
 bool USpeechRecognizer::SetSuppressBlank(bool Value)
 {
 	return Thread->SetSuppressBlank(Value);
@@ -152,4 +157,9 @@ bool USpeechRecognizer::SetSuppressBlank(bool Value)
 bool USpeechRecognizer::SetSuppressNonSpeechTokens(bool Value)
 {
 	return Thread->SetSuppressNonSpeechTokens(Value);
+}
+
+bool USpeechRecognizer::SetBeamSize(int32 Value)
+{
+	return Thread->SetBeamSize(Value);
 }
