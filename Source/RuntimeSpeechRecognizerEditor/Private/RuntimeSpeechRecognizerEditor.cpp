@@ -129,6 +129,13 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::SetupLanguageModel() const
 	FString PackagePath = SpeechRecognizerSettings->GetLanguageModelPackagePath();
 	FString AssetPath = SpeechRecognizerSettings->GetLanguageModelAssetPath();
 
+	const FString LanguageModelAssetRelativePath = EditorLMDirectoryPath + "/" + AssetName + ".uasset";
+	const FString LanguageModelAssetFullPath = FPaths::ConvertRelativePathToFull(LanguageModelAssetRelativePath);
+	if (PlatformFile.FileExists(*LanguageModelAssetFullPath))
+	{
+		return DownloadFuture;
+	}
+
 	return DownloadFuture.Next([this, EditorLMFilePathFull, AssetName = MoveTemp(AssetName), PackagePath = MoveTemp(PackagePath), AssetPath = MoveTemp(AssetPath)](bool bDownloadSucceeded) mutable
 	{
 		if (!bDownloadSucceeded)
