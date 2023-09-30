@@ -45,6 +45,12 @@ public:
 	FString GetLanguageModelPackagePath() const;
 
 	/**
+	 * Get the full path to the language model package
+	 * The format is "[PackagePath]/[AssetName]"
+	 */
+	FString GetLanguageModelFullPackagePath() const;
+
+	/**
 	 * Get the full path to the language model asset
 	 * The format is "[PackagePath]/[AssetName].[AssetName]"
 	 */

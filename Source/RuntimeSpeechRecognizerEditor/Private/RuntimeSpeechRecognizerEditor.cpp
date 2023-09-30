@@ -7,6 +7,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "ISettingsModule.h"
+#include "ObjectTools.h"
 #include "Settings/ProjectPackagingSettings.h"
 #include "SpeechRecognizerEditorDefines.h"
 #include "SpeechRecognizerModel.h"
@@ -101,7 +102,7 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::SetupLanguageModel() const
 	TFuture<bool> DownloadFuture;
 
 	// Making sure the language model file exists
-	if (!PlatformFile.FileExists(*EditorLMFilePathFull))
+	if (!IsLanguageModelPresent(true, false))
 	{
 		DownloadFuture = DownloadLanguageModel(ModelSize, ModelLanguage).Next([EditorLMFilePathFull](bool bDownloadSucceeded) mutable
 		{
@@ -235,6 +236,21 @@ bool FRuntimeSpeechRecognizerEditorModule::DeleteLanguageModels(bool bDeleteFrom
 		if (PlatformFile.FileExists(*AbsoluteAssetPath))
 		{
 			PlatformFile.DeleteFile(*AbsoluteAssetPath);
+		}
+
+		//  More thorough removal of the language model
+		const FString AssetName = SpeechRecognizerSettings->GetLanguageModelAssetName();
+		const FString FullPackagePath = SpeechRecognizerSettings->GetLanguageModelFullPackagePath();
+		if (UPackage* Package = FindObject<UPackage>(nullptr, *FullPackagePath))
+		{
+			if (UObject* ExistingObject = StaticFindObject(UObject::StaticClass(), Package, *AssetName))
+			{
+				if (const bool bDeleteSucceeded = ObjectTools::DeleteSingleObject(ExistingObject))
+				{
+					// Collect garbage to completely remove the asset from memory
+					CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+				}
+			}
 		}
 	}
 

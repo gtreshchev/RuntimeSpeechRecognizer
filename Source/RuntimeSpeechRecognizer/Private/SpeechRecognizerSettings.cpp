@@ -33,6 +33,11 @@ FString USpeechRecognizerSettings::GetLanguageModelPackagePath() const
 	return TEXT("/RuntimeSpeechRecognizer");
 }
 
+FString USpeechRecognizerSettings::GetLanguageModelFullPackagePath() const
+{
+	return FPaths::Combine(GetLanguageModelPackagePath(), GetLanguageModelAssetName());
+}
+
 FString USpeechRecognizerSettings::GetLanguageModelAssetPath() const
 {
 	const FString AssetName = GetLanguageModelAssetName();
