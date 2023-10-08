@@ -10,6 +10,7 @@
 #include "HAL/ThreadSafeBool.h"
 #include "Templates/UniquePtr.h"
 #include "Async/Future.h"
+#include <atomic>
 
 #include "SpeechRecognizerThread.generated.h"
 
@@ -172,10 +173,11 @@ public:
 	 * @return True if the thread was successfully started, false otherwise
 	 */
 	TFuture<bool> StartThread();
+
 private:
 	TUniquePtr<TPromise<bool>> StartThreadPromise;
-public:
 
+public:
 	/**
 	 * Stops the thread worker
 	 */
@@ -424,8 +426,53 @@ private:
 	/** Queue of audio data waiting to be processed */
 	TQueue<Audio::FAlignedFloatBuffer> AudioQueue;
 
+	/**
+	 * Pending audio data that automatically mixes and resamples audio data based on the whisper recognition requirements
+	 */
+	struct FPendingAudioData
+	{
+		/**
+		 * Adds audio data to the pending audio data
+		 * 
+		 * @param AudioData Audio data to add
+		 * @param SampleRate Sample rate of the audio data
+		 * @param NumOfChannels Number of channels of the audio data
+		 * @note This function is thread safe
+		 */
+		void AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels);
+
+		/**
+		 * Gets the total size of the mixed and resampled audio data
+		 * @return The total size of the mixed and resampled audio data
+		 */
+		int64 GetTotalMixedAndResampledSize() const;
+
+		/**
+		 * Gets the mixed and resampled audio data
+		 * @param OutPCMData The mixed and resampled audio data
+		 * @return True if the mixed and resampled audio data was successfully retrieved, false otherwise
+		 */
+		bool GetMixedAndResampledAudio(Audio::FAlignedFloatBuffer& OutPCMData);
+
+	protected:
+		/**
+		 * Recalculates the estimated total size of the mixed and resampled audio data
+		 */
+		void RecalculateTotalMixedAndResampledSize();
+
+	private:
+		/** Map of audio data keyed by sample rate and number of channels */
+		TMap<TPair<float /*SampleRate*/, uint32 /*NumOfChannels*/>, Audio::FAlignedFloatBuffer> AudioDataMap;
+
+		/** Estimated total size of the mixed and resampled audio data */
+		std::atomic<int64> TotalMixedAndResampledSize = 0;
+
+		/** Data guard (mutex) for thread safety of the audio data map */
+		mutable FCriticalSection DataGuard;
+	};
+
 	/** Audio data accumulated but not yet added to the queue */
-	Audio::FAlignedFloatBuffer PendingAudio;
+	FPendingAudioData PendingAudio;
 
 	/** Whisper state */
 	FWhisperSpeechRecognizerState WhisperState;

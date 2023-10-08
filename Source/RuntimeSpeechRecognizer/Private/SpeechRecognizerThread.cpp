@@ -220,6 +220,96 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 	}*/
 }
 
+void FSpeechRecognizerThread::FPendingAudioData::AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels)
+{
+	FScopeLock Lock(&DataGuard);
+	AudioDataMap.FindOrAdd(TTuple<float, uint32>{SampleRate, NumOfChannels}).Append(MoveTemp(AudioData));
+	RecalculateTotalMixedAndResampledSize();
+}
+
+int64 FSpeechRecognizerThread::FPendingAudioData::GetTotalMixedAndResampledSize() const
+{
+	return TotalMixedAndResampledSize;
+}
+
+bool FSpeechRecognizerThread::FPendingAudioData::GetMixedAndResampledAudio(Audio::FAlignedFloatBuffer& OutPCMData)
+{
+	FScopeLock Lock(&DataGuard);
+	for (auto AudioDataPair : AudioDataMap)
+	{
+		const int64 OriginalNumSamples = AudioDataPair.Get<1>().Num();
+		const float OriginalSampleRate = AudioDataPair.Get<0>().Get<0>();
+		const uint32 OriginalNumOfChannels = AudioDataPair.Get<0>().Get<1>();
+		Audio::FAlignedFloatBuffer& PCMData = AudioDataPair.Get<1>();
+
+		// Resampling to WHISPER_SAMPLE_RATE (16kHz by default) if needed
+		if (static_cast<uint32>(OriginalSampleRate) != WHISPER_SAMPLE_RATE)
+		{
+			Audio::FAlignedFloatBuffer ResampledPCMData;
+
+			const Audio::FResamplingParameters ResampleParameters = {
+				Audio::EResamplingMethod::Linear,
+				static_cast<int32>(OriginalNumOfChannels),
+				static_cast<float>(OriginalSampleRate),
+				static_cast<float>(WHISPER_SAMPLE_RATE),
+				PCMData
+			};
+
+			ResampledPCMData.AddUninitialized(Audio::GetOutputBufferSize(ResampleParameters));
+			Audio::FResamplerResults ResampleResults;
+			ResampleResults.OutBuffer = &ResampledPCMData;
+
+			if (!Audio::Resample(ResampleParameters, ResampleResults))
+			{
+				UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to resample audio data from %f to %f"), OriginalSampleRate, static_cast<float>(WHISPER_SAMPLE_RATE));
+				return false;
+			}
+
+			PCMData = MoveTemp(ResampledPCMData);
+		}
+
+		// Reducing the number of channels to 1 if needed
+		if (OriginalNumOfChannels != 1)
+		{
+			Audio::TSampleBuffer<float> PCMSampleBuffer(PCMData, OriginalNumOfChannels, OriginalSampleRate);
+			{
+				PCMSampleBuffer.MixBufferToChannels(1);
+			}
+			Audio::FAlignedFloatBuffer WaveDataTemp = Audio::FAlignedFloatBuffer(PCMSampleBuffer.GetData(), PCMSampleBuffer.GetNumSamples());
+			PCMData = MoveTemp(WaveDataTemp);
+		}
+		
+		OutPCMData.Append(MoveTemp(PCMData));
+	}
+	AudioDataMap.Empty();
+	TotalMixedAndResampledSize = 0;
+	return true;
+}
+
+void FSpeechRecognizerThread::FPendingAudioData::RecalculateTotalMixedAndResampledSize()
+{
+	constexpr float RequiredSampleRate = WHISPER_SAMPLE_RATE;
+	constexpr uint32 RequiredNumOfChannels = 1;
+
+	int64 TotalSize = 0;
+	for (auto AudioDataPair : AudioDataMap)
+	{
+		const int64 OriginalNumSamples = AudioDataPair.Get<1>().Num();
+		const float OriginalSampleRate = AudioDataPair.Get<0>().Get<0>();
+		const uint32 OriginalNumOfChannels = AudioDataPair.Get<0>().Get<1>();
+
+		// Calculate the ratio between the original and required sample rates
+		const float SampleRateRatio = OriginalSampleRate / RequiredSampleRate;
+
+		// Calculate the ratio between the original and required number of channels
+		const float NumChannelsRatio = static_cast<float>(OriginalNumOfChannels) / RequiredNumOfChannels;
+
+		// Calculate the estimated number of samples after resampling/remixing
+		TotalSize += static_cast<int64>(OriginalNumSamples / SampleRateRatio / NumChannelsRatio);
+	}
+	TotalMixedAndResampledSize = TotalSize;
+}
+
 FSpeechRecognizerThread::FSpeechRecognizerThread()
 	: bIsStopped(true)
 , bIsFinished(true)
@@ -384,50 +474,19 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 		return;
 	}
 
-	// Resampling to WHISPER_SAMPLE_RATE (16kHz by default) if needed
-	if (static_cast<uint32>(SampleRate) != WHISPER_SAMPLE_RATE)
+	if (bLast)
 	{
-		Audio::FAlignedFloatBuffer ResampledPCMData;
-
-		const Audio::FResamplingParameters ResampleParameters = {
-			Audio::EResamplingMethod::FastSinc,
-			static_cast<int32>(NumOfChannels),
-			static_cast<float>(SampleRate),
-			static_cast<float>(WHISPER_SAMPLE_RATE),
-			PCMData
-		};
-
-		ResampledPCMData.AddUninitialized(Audio::GetOutputBufferSize(ResampleParameters));
-		Audio::FResamplerResults ResampleResults;
-		ResampleResults.OutBuffer = &ResampledPCMData;
-
-		if (!Audio::Resample(ResampleParameters, ResampleResults))
+		PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+		const int32 NumOfQueuedSamples = PendingAudio.GetTotalMixedAndResampledSize();
+		Audio::FAlignedFloatBuffer PendingAudioData;
+		if (!PendingAudio.GetMixedAndResampledAudio(PendingAudioData))
 		{
-			const FString ShortErrorMessage = TEXT("Audio resampling failed");
-			const FString LongErrorMessage = FString::Printf(TEXT("%s. sample rate: %f, num of channels: %d"), *ShortErrorMessage, SampleRate, NumOfChannels);
+			const FString ShortErrorMessage = TEXT("Audio processing failed");
+			const FString LongErrorMessage = TEXT("Failed to get the mixed and resampled audio data from the pending audio");
 			ReportError(ShortErrorMessage, LongErrorMessage);
 			return;
 		}
-
-		PCMData = MoveTemp(ResampledPCMData);
-	}
-
-	// Reducing the number of channels to 1 if needed
-	if (NumOfChannels != 1)
-	{
-		Audio::TSampleBuffer<float> PCMSampleBuffer(PCMData, NumOfChannels, WHISPER_SAMPLE_RATE);
-		{
-			PCMSampleBuffer.MixBufferToChannels(1);
-		}
-		Audio::FAlignedFloatBuffer WaveDataTemp = Audio::FAlignedFloatBuffer(PCMSampleBuffer.GetData(), PCMSampleBuffer.GetNumSamples());
-		PCMData = MoveTemp(WaveDataTemp);
-	}
-
-	if (bLast)
-	{
-		PendingAudio.Append(MoveTemp(PCMData));
-		const int32 NumOfQueuedSamples = PendingAudio.Num();
-		AudioQueue.Enqueue(MoveTemp(PendingAudio));
+		AudioQueue.Enqueue(MoveTemp(PendingAudioData));
 		bIsFinished.AtomicSet(false);
 		UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Enqueued audio data from the pending audio to the queue of the speech recognizer as the last data (num of samples: %d)"), NumOfQueuedSamples);
 	}
@@ -437,16 +496,24 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 		const int32 NumOfSamplesPerStep = (1e-3 * RecognitionParameters.StepSizeMs) * WHISPER_SAMPLE_RATE;
 
 		// If pending audio is insufficient to fill the step size, append new data until sufficient
-		if (PCMData.Num() + PendingAudio.Num() < NumOfSamplesPerStep)
+		if (PCMData.Num() + PendingAudio.GetTotalMixedAndResampledSize() < NumOfSamplesPerStep)
 		{
-			PendingAudio.Append(MoveTemp(PCMData));
-			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Pending audio data instead of enqueuing it since it is not enough to fill the step size (pending: %d, num of samples per step: %d)"), PendingAudio.Num(), NumOfSamplesPerStep);
+			PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Pending audio data instead of enqueuing it since it is not enough to fill the step size (pending: %lld, num of samples per step: %d)"), PendingAudio.GetTotalMixedAndResampledSize(), NumOfSamplesPerStep);
 		}
 		else
 		{
-			PendingAudio.Append(MoveTemp(PCMData));
-			const int32 NumOfQueuedSamples = PendingAudio.Num();
-			AudioQueue.Enqueue(MoveTemp(PendingAudio));
+			PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+			const int32 NumOfQueuedSamples = PendingAudio.GetTotalMixedAndResampledSize();
+			Audio::FAlignedFloatBuffer PendingAudioData;
+			if (!PendingAudio.GetMixedAndResampledAudio(PendingAudioData))
+			{
+				const FString ShortErrorMessage = TEXT("Audio processing failed");
+				const FString LongErrorMessage = TEXT("The audio data could not be processed to the recognizer since the pending audio data could not be mixed and resampled");
+				ReportError(ShortErrorMessage, LongErrorMessage);
+				return;
+			}
+			AudioQueue.Enqueue(MoveTemp(PendingAudioData));
 			bIsFinished.AtomicSet(false);
 			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Enqueued audio data from the pending audio to the queue of the speech recognizer (num of samples: %d)"), NumOfQueuedSamples);
 		}
@@ -470,8 +537,16 @@ void FSpeechRecognizerThread::ForceProcessPendingAudioData()
 		return;
 	}
 
-	const int32 NumOfQueuedSamples = PendingAudio.Num();
-	AudioQueue.Enqueue(MoveTemp(PendingAudio));
+	const int32 NumOfQueuedSamples = PendingAudio.GetTotalMixedAndResampledSize();
+	Audio::FAlignedFloatBuffer PendingAudioData;
+	if (!PendingAudio.GetMixedAndResampledAudio(PendingAudioData))
+	{
+		const FString ShortErrorMessage = TEXT("Audio processing failed");
+		const FString LongErrorMessage = TEXT("The audio data could not be processed to the recognizer since the pending audio data could not be mixed and resampled");
+		return;
+	}
+
+	AudioQueue.Enqueue(MoveTemp(PendingAudioData));
 	bIsFinished.AtomicSet(false);
 	UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Enqueued audio data from the pending audio to the queue of the speech recognizer as the last data (num of samples: %d)"), NumOfQueuedSamples);
 }
@@ -508,7 +583,7 @@ uint32 FSpeechRecognizerThread::Run()
 			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Processed audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
 		}
 
-		if (PendingAudio.Num() == 0 && !bIsFinished)
+		if (PendingAudio.GetTotalMixedAndResampledSize() == 0 && !bIsFinished)
 		{
 			bIsFinished.AtomicSet(true);
 			AsyncTask(ENamedThreads::GameThread, [this]()
