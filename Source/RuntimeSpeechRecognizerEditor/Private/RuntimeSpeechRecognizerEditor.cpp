@@ -449,6 +449,9 @@ bool FRuntimeSpeechRecognizerEditorModule::UpdatePackagingSettings() const
 		PackagingSettings->DirectoriesToAlwaysCook.Add(NewDirPath);
 	}
 
+	// If bCookMapsOnly is true, the language model will not be staged
+	PackagingSettings->bCookMapsOnly = false;
+
 	return true;
 }
 
