@@ -385,6 +385,13 @@ TFuture<int64> FLanguageModelDownloader::GetContentSize(const FString& URL, floa
 			return;
 		}
 
+		if (Response->GetResponseCode() == EHttpResponseCodes::NotFound)
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to get size of file from %s: file not found"), *URL);
+			PromisePtr->SetValue(0);
+			return;
+		}
+
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Got size of file from %s: %lld"), *URL, ContentLength);
 		PromisePtr->SetValue(ContentLength);
 	});

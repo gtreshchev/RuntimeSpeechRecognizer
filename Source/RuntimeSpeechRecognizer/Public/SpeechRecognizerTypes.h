@@ -27,11 +27,35 @@ UENUM(BlueprintType, Category = "Runtime Speech Recognizer")
 enum class ESpeechRecognizerModelSize : uint8
 {
 	Tiny,
+	Tiny_Q5_1 UMETA(DisplayName = "Tiny Quantized (Q5_1)", ToolTip = "Tiny model with quantization to 5 bits and 1 decimal point"),
 	Base,
+	Base_Q5_1 UMETA(DisplayName = "Base Quantized (Q5_1)", ToolTip = "Base model with quantization to 5 bits and 1 decimal point"),
 	Small,
+	Small_Q5_1 UMETA(DisplayName = "Small Quantized (Q5_1)", ToolTip = "Small model with quantization to 5 bits and 1 decimal point"),
 	Medium,
-	Large
+	Medium_Q5_0 UMETA(DisplayName = "Medium Quantized (Q5_0)", ToolTip = "Medium model with quantization to 5 bits and 0 decimal points"),
+	Large,
+	Large_Q5_0 UMETA(DisplayName = "Large Quantized (Q5_0)", ToolTip = "Large model with quantization to 5 bits and 0 decimal points"),
+	Large_V1,
+	Large_V2,
+	Large_V2_Q5_0 UMETA(DisplayName = "Large V2 Quantized (Q5_0)", ToolTip = "Large V2 model with quantization to 5 bits and 0 decimal points"),
+	Custom UMETA(ToolTip = "Custom model size. The model size will be determined by the language model file name (e.g. 'ggml-medium.en-q5_0.bin'")
 };
+
+/**
+ * Check if the language model size supports English-only model language
+ */
+RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpeechRecognizerModelSize ModelSize)
+{
+	// English-only model language is not supported for large models
+	if (ModelSize == ESpeechRecognizerModelSize::Large || ModelSize == ESpeechRecognizerModelSize::Large_Q5_0
+		|| ModelSize == ESpeechRecognizerModelSize::Large_V1 || ModelSize == ESpeechRecognizerModelSize::Large_V2
+		|| ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0)
+	{
+		return false;
+	}
+	return true;
+}
 
 /**
  * The language model for the speech recognizer. Defines the vocabulary of words the recognizer will understand
@@ -158,7 +182,7 @@ enum class ESpeechRecognizerLanguage : uint8
 /**
  * Convert ESpeechRecognizerLanguage to string to use when calling the Whisper API
  */
-inline const char* EnumToString(ESpeechRecognizerLanguage Enum)
+RUNTIMESPEECHRECOGNIZER_API inline const char* EnumToString(ESpeechRecognizerLanguage Enum)
 {
 	switch (Enum)
 	{

@@ -36,7 +36,7 @@ DECLARE_DELEGATE_TwoParams(FOnSpeechRecognitionError, const FString& /* ShortErr
  * User data for Whisper speech recognizer
  * Used to identify the thread worker responsible for recognized words
  */
-struct FWhisperSpeechRecognizerUserData
+struct RUNTIMESPEECHRECOGNIZER_API FWhisperSpeechRecognizerUserData
 {
 	/** Weak pointer to the speech recognizer thread */
 	TWeakPtr<FSpeechRecognizerThread> SpeechRecognizerWeakPtr;
@@ -45,7 +45,7 @@ struct FWhisperSpeechRecognizerUserData
 /**
  * The state of the Whisper speech recognizer, which includes the context, parameters, and user data
  */
-struct FWhisperSpeechRecognizerState
+struct RUNTIMESPEECHRECOGNIZER_API FWhisperSpeechRecognizerState
 {
 	FWhisperSpeechRecognizerState();
 
@@ -81,7 +81,7 @@ struct FWhisperSpeechRecognizerState
  * When adding more parameters, make sure to update the FillWhisperStateParameters() function
  */
 USTRUCT(BlueprintType, Category = "Runtime Speech Recognizer")
-struct FSpeechRecognitionParameters
+struct RUNTIMESPEECHRECOGNIZER_API FSpeechRecognitionParameters
 {
 	GENERATED_BODY()
 
@@ -161,7 +161,7 @@ struct FSpeechRecognitionParameters
 /**
  * Thread worker for speech recognition. Manages a worker thread that performs speech recognition on audio input data
  */
-class FSpeechRecognizerThread : public FRunnable, public TSharedFromThis<FSpeechRecognizerThread>
+class RUNTIMESPEECHRECOGNIZER_API FSpeechRecognizerThread : public FRunnable, public TSharedFromThis<FSpeechRecognizerThread>
 {
 public:
 	FSpeechRecognizerThread();
@@ -439,7 +439,7 @@ private:
 		 * @param NumOfChannels Number of channels of the audio data
 		 * @note This function is thread safe
 		 */
-		void AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels);
+		bool AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels);
 
 		/**
 		 * Gets the total size of the mixed and resampled audio data

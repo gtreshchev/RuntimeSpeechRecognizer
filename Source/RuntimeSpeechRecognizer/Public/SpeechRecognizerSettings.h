@@ -32,6 +32,13 @@ public:
 	FString ModelDownloadBaseUrl;
 #endif
 
+	/** The custom name to use when downloading the language model. Only used if the language model size is custom
+	 * For example, if the custom name is "ggml-medium.en-q5_0.bin", and the base URL is "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/",
+	 * the language model will be downloaded from "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin"
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Advanced Runtime Speech Recognizer")
+	FString ModelDownloadCustomName;
+
 	/**
 	 * Get the name of the language model asset
 	 * The format is "[AssetName]"
