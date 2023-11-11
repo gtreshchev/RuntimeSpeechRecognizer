@@ -56,7 +56,7 @@ void USpeechRecognizerSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 
 	if (PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(USpeechRecognizerSettings, ModelSize))
 	{
-		if (ModelSize == ESpeechRecognizerModelSize::Large)
+		if (!DoesSupportEnglishOnlyModelLanguage(ModelSize) || ModelSize == ESpeechRecognizerModelSize::Custom)
 		{
 			ModelLanguage = ESpeechRecognizerModelLanguage::Multilingual;
 			SaveConfig();
@@ -81,8 +81,12 @@ bool USpeechRecognizerSettings::CanEditChange(const FProperty* InProperty) const
 
 	if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(USpeechRecognizerSettings, ModelLanguage))
 	{
-		// Can't edit the language if the model size is large since it has only a single option available (multilingual one)
-		return ModelSize != ESpeechRecognizerModelSize::Large;
+		return DoesSupportEnglishOnlyModelLanguage(ModelSize) && ModelSize != ESpeechRecognizerModelSize::Custom;
+	}
+
+	if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(USpeechRecognizerSettings, ModelDownloadCustomName))
+	{
+		return ModelSize == ESpeechRecognizerModelSize::Custom;
 	}
 
 	return true;

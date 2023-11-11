@@ -307,27 +307,46 @@ FString FRuntimeSpeechRecognizerEditorModule::GetEditorLMFilePath(ESpeechRecogni
 
 FString FRuntimeSpeechRecognizerEditorModule::GetLMFileName(ESpeechRecognizerModelSize ModelSize, ESpeechRecognizerModelLanguage ModelLanguage) const
 {
-	const FString ModelSizeString = ModelSizeToStringForFileName(ModelSize);
-	return FString::Printf(TEXT("ggml-%s%s.%s"), *ModelSizeString, ModelLanguage == ESpeechRecognizerModelLanguage::EnglishOnly ? TEXT(".en") : TEXT(""), *LanguageModelExtension);
-}
-
-FString FRuntimeSpeechRecognizerEditorModule::ModelSizeToStringForFileName(ESpeechRecognizerModelSize ModelSize) const
-{
-	switch (ModelSize)
+	if (ModelSize == ESpeechRecognizerModelSize::Custom)
 	{
-	case ESpeechRecognizerModelSize::Tiny:
-		return TEXT("tiny");
-	case ESpeechRecognizerModelSize::Base:
-		return TEXT("base");
-	case ESpeechRecognizerModelSize::Small:
-		return TEXT("small");
-	case ESpeechRecognizerModelSize::Medium:
-		return TEXT("medium");
-	case ESpeechRecognizerModelSize::Large:
-		return TEXT("large");
-	default:
-		return TEXT("invalid");
+		const USpeechRecognizerSettings* SpeechRecognizerSettings = GetDefault<USpeechRecognizerSettings>();
+		if (!SpeechRecognizerSettings)
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Cannot get the speech recognizer settings"));
+			return TEXT("invalid");
+		}
+		return SpeechRecognizerSettings->ModelDownloadCustomName;
 	}
+
+	const FString LMFileName_Pattern = [ModelSize]()
+	{
+		// @formatter:off
+		switch (ModelSize)
+		{
+		case ESpeechRecognizerModelSize::Tiny: return TEXT("{Prefix}tiny{LanguageCode}{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Tiny_Q5_1:	return TEXT("{Prefix}tiny{LanguageCode}-q5_1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Base: return TEXT("{Prefix}base{LanguageCode}");
+		case ESpeechRecognizerModelSize::Base_Q5_1: return TEXT("{Prefix}base{LanguageCode}-q5_1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Small: return TEXT("{Prefix}small{LanguageCode}");
+		case ESpeechRecognizerModelSize::Small_Q5_1: return TEXT("{Prefix}small{LanguageCode}-q5_1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Medium: return TEXT("{Prefix}medium{LanguageCode}");
+		case ESpeechRecognizerModelSize::Medium_Q5_0: return TEXT("{Prefix}medium{LanguageCode}-q5_0{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Large: return TEXT("{Prefix}large{LanguageCode}");
+		case ESpeechRecognizerModelSize::Large_Q5_0: return TEXT("{Prefix}large{LanguageCode}-q5_0{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Large_V1: return TEXT("{Prefix}large{LanguageCode}-v1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Large_V2: return TEXT("{Prefix}large{LanguageCode}-v2{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Large_V2_Q5_0: return TEXT("{Prefix}large-v2{LanguageCode}-q5_0{LanguageModelExtension}");
+		default: return TEXT("{Prefix}invalid{LanguageCode}{LanguageModelExtension}");
+		}
+		// @formatter:on
+	}();
+
+	TMap<FString, FStringFormatArg> Args;
+	Args.Add(TEXT("Prefix"), TEXT("ggml-"));
+	Args.Add(TEXT("LanguageCode"), ModelLanguage == ESpeechRecognizerModelLanguage::EnglishOnly ? TEXT(".en") : TEXT(""));
+	Args.Add(TEXT("LanguageModelExtension"), FString::Printf(TEXT(".%s"), *LanguageModelExtension));
+
+	return FString::Format(*LMFileName_Pattern, Args);
 }
 
 TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeechRecognizerModelSize ModelSize, ESpeechRecognizerModelLanguage ModelLanguage) const

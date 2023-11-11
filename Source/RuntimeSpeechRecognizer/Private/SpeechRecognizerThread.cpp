@@ -118,7 +118,7 @@ FWhisperSpeechRecognizerState::FWhisperSpeechRecognizerState()
 
 bool FWhisperSpeechRecognizerState::Init(uint8* BulkDataPtr, int64 BulkDataSize, TSharedPtr<FSpeechRecognizerThread> SpeechRecognizerPtr)
 {
-	WhisperContext = whisper_init_from_buffer(BulkDataPtr, BulkDataSize);
+	WhisperContext = whisper_init_from_buffer_with_params(BulkDataPtr, BulkDataSize, whisper_context_default_params());
 	if (!WhisperContext)
 	{
 		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to create whisper context from buffer"));
@@ -220,11 +220,17 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 	}*/
 }
 
-void FSpeechRecognizerThread::FPendingAudioData::AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels)
+bool FSpeechRecognizerThread::FPendingAudioData::AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels)
 {
+	if (SampleRate <= 0.0f || NumOfChannels <= 0)
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Invalid sample rate (%f) or number of channels (%d). Both must be greater than 0"), SampleRate, NumOfChannels);
+		return false;
+	}
 	FScopeLock Lock(&DataGuard);
 	AudioDataMap.FindOrAdd(TTuple<float, uint32>{SampleRate, NumOfChannels}).Append(MoveTemp(AudioData));
 	RecalculateTotalMixedAndResampledSize();
+	return true;
 }
 
 int64 FSpeechRecognizerThread::FPendingAudioData::GetTotalMixedAndResampledSize() const
@@ -476,13 +482,19 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 
 	if (bLast)
 	{
-		PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+		if (!PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels))
+		{
+			const FString ShortErrorMessage = TEXT("Audio processing failed");
+			const FString LongErrorMessage = TEXT("Failed to add the audio data to the pending audio");
+			ReportError(ShortErrorMessage, LongErrorMessage);
+			return;
+		}
 		const int32 NumOfQueuedSamples = PendingAudio.GetTotalMixedAndResampledSize();
 		Audio::FAlignedFloatBuffer PendingAudioData;
 		if (!PendingAudio.GetMixedAndResampledAudio(PendingAudioData))
 		{
 			const FString ShortErrorMessage = TEXT("Audio processing failed");
-			const FString LongErrorMessage = TEXT("Failed to get the mixed and resampled audio data from the pending audio");
+			const FString LongErrorMessage = TEXT("The audio data could not be processed to the recognizer since the pending audio data could not be mixed and resampled");
 			ReportError(ShortErrorMessage, LongErrorMessage);
 			return;
 		}
@@ -498,12 +510,24 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 		// If pending audio is insufficient to fill the step size, append new data until sufficient
 		if (PCMData.Num() + PendingAudio.GetTotalMixedAndResampledSize() < NumOfSamplesPerStep)
 		{
-			PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+			if (!PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels))
+			{
+				const FString ShortErrorMessage = TEXT("Audio processing failed");
+				const FString LongErrorMessage = TEXT("Failed to add the audio data to the pending audio");
+				ReportError(ShortErrorMessage, LongErrorMessage);
+				return;
+			}
 			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Pending audio data instead of enqueuing it since it is not enough to fill the step size (pending: %lld, num of samples per step: %d)"), PendingAudio.GetTotalMixedAndResampledSize(), NumOfSamplesPerStep);
 		}
 		else
 		{
-			PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels);
+			if (!PendingAudio.AddAudio(MoveTemp(PCMData), SampleRate, NumOfChannels))
+			{
+				const FString ShortErrorMessage = TEXT("Audio processing failed");
+				const FString LongErrorMessage = TEXT("Failed to add the audio data to the pending audio");
+				ReportError(ShortErrorMessage, LongErrorMessage);
+				return;
+			}
 			const int32 NumOfQueuedSamples = PendingAudio.GetTotalMixedAndResampledSize();
 			Audio::FAlignedFloatBuffer PendingAudioData;
 			if (!PendingAudio.GetMixedAndResampledAudio(PendingAudioData))
@@ -543,6 +567,7 @@ void FSpeechRecognizerThread::ForceProcessPendingAudioData()
 	{
 		const FString ShortErrorMessage = TEXT("Audio processing failed");
 		const FString LongErrorMessage = TEXT("The audio data could not be processed to the recognizer since the pending audio data could not be mixed and resampled");
+		ReportError(ShortErrorMessage, LongErrorMessage);
 		return;
 	}
 

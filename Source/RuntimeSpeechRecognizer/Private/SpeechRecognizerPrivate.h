@@ -88,6 +88,12 @@ extern "C"
 {
 #include "ggml.h"
 #include "ggml.c"
+//#include "ggml-alloc.h"
+#include "ggml-alloc.c"
+//#include "ggml-quants.h"
+#include "ggml-quants.c"
+//#include "ggml-backend.h"
+#include "ggml-backend.c"
 }
 
 THIRD_PARTY_INCLUDES_END

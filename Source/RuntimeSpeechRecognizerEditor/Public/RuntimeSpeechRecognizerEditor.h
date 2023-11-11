@@ -72,14 +72,6 @@ protected:
 	 */
 	FString GetLMFileName(ESpeechRecognizerModelSize ModelSize, ESpeechRecognizerModelLanguage ModelLanguage) const;
 
-	/**
-	 * Convert the language model size enum to a string that can be used to build a file name to the editor-specific language model
-	 *
-	 * @param ModelSize The size of the language model
-	 * @return The string representation of the language model size
-	 */
-	FString ModelSizeToStringForFileName(ESpeechRecognizerModelSize ModelSize) const;
-
 private:
 	/**
 	 * Download a language model for the given size and language
