@@ -465,9 +465,9 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 	}
 
 	// Make sure to process the data in the audio thread
-	if (!IsInAudioThread())
+	if (IsInGameThread())
 	{
-		FAudioThread::RunCommandOnAudioThread([SpeechRecognizerSharedPtr = WhisperState.WhisperUserData.SpeechRecognizerWeakPtr.Pin(), PCMData = MoveTemp(PCMData), SampleRate, NumOfChannels, bLast]() mutable
+		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [SpeechRecognizerSharedPtr = WhisperState.WhisperUserData.SpeechRecognizerWeakPtr.Pin(), PCMData = MoveTemp(PCMData), SampleRate, NumOfChannels, bLast]() mutable
 		{
 			if (!SpeechRecognizerSharedPtr.IsValid())
 			{
