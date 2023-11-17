@@ -464,7 +464,7 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 		return;
 	}
 
-	// Make sure to process the data in the audio thread
+	// Make sure to process the data in background thread
 	if (IsInGameThread())
 	{
 		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [SpeechRecognizerSharedPtr = WhisperState.WhisperUserData.SpeechRecognizerWeakPtr.Pin(), PCMData = MoveTemp(PCMData), SampleRate, NumOfChannels, bLast]() mutable
@@ -476,7 +476,6 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 			}
 			SpeechRecognizerSharedPtr->ProcessPCMData(MoveTemp(PCMData), SampleRate, NumOfChannels, bLast);
 		});
-
 		return;
 	}
 
@@ -558,6 +557,21 @@ void FSpeechRecognizerThread::ForceProcessPendingAudioData()
 		const FString ShortErrorMessage = TEXT("Audio processing failed");
 		const FString LongErrorMessage = TEXT("The audio data could not be processed to the recognizer since the thread is stopped");
 		ReportError(ShortErrorMessage, LongErrorMessage);
+		return;
+	}
+
+	// Make sure to process the data in background thread
+	if (IsInGameThread())
+	{
+		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [SpeechRecognizerSharedPtr = WhisperState.WhisperUserData.SpeechRecognizerWeakPtr.Pin()]() mutable
+		{
+			if (!SpeechRecognizerSharedPtr.IsValid())
+			{
+				UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("Failed to force process the audio data since the thread worker is invalid"));
+				return;
+			}
+			SpeechRecognizerSharedPtr->ForceProcessPendingAudioData();
+		});
 		return;
 	}
 
