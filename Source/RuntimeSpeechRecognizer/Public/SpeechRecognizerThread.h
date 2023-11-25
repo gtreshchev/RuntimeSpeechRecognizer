@@ -465,7 +465,7 @@ private:
 		TMap<TPair<float /*SampleRate*/, uint32 /*NumOfChannels*/>, Audio::FAlignedFloatBuffer> AudioDataMap;
 
 		/** Estimated total size of the mixed and resampled audio data */
-		std::atomic<int64> TotalMixedAndResampledSize = 0;
+		std::atomic<int64> TotalMixedAndResampledSize{ 0 };
 
 		/** Data guard (mutex) for thread safety of the audio data map */
 		mutable FCriticalSection DataGuard;
