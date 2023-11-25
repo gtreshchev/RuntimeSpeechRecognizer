@@ -34,11 +34,11 @@ enum class ESpeechRecognizerModelSize : uint8
 	Small_Q5_1 UMETA(DisplayName = "Small Quantized (Q5_1)", ToolTip = "Small model with quantization to 5 bits and 1 decimal point"),
 	Medium,
 	Medium_Q5_0 UMETA(DisplayName = "Medium Quantized (Q5_0)", ToolTip = "Medium model with quantization to 5 bits and 0 decimal points"),
-	Large,
-	Large_Q5_0 UMETA(DisplayName = "Large Quantized (Q5_0)", ToolTip = "Large model with quantization to 5 bits and 0 decimal points"),
 	Large_V1,
 	Large_V2,
 	Large_V2_Q5_0 UMETA(DisplayName = "Large V2 Quantized (Q5_0)", ToolTip = "Large V2 model with quantization to 5 bits and 0 decimal points"),
+	Large_V3,
+	Large_V3_Q5_0 UMETA(DisplayName = "Large V3 Quantized (Q5_0)", ToolTip = "Large V3 model with quantization to 5 bits and 0 decimal points"),
 	Custom UMETA(ToolTip = "Custom model size. The model size will be determined by the language model file name (e.g. 'ggml-medium.en-q5_0.bin'")
 };
 
@@ -48,9 +48,9 @@ enum class ESpeechRecognizerModelSize : uint8
 RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpeechRecognizerModelSize ModelSize)
 {
 	// English-only model language is not supported for large models
-	if (ModelSize == ESpeechRecognizerModelSize::Large || ModelSize == ESpeechRecognizerModelSize::Large_Q5_0
-		|| ModelSize == ESpeechRecognizerModelSize::Large_V1 || ModelSize == ESpeechRecognizerModelSize::Large_V2
-		|| ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0)
+	if (ModelSize == ESpeechRecognizerModelSize::Large_V1 ||
+		ModelSize == ESpeechRecognizerModelSize::Large_V2 || ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0 ||
+		ModelSize == ESpeechRecognizerModelSize::Large_V3 || ModelSize == ESpeechRecognizerModelSize::Large_V3_Q5_0)
 	{
 		return false;
 	}
