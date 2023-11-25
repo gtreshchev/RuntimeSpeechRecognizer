@@ -166,7 +166,7 @@ bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor *
 
 // backend copy
 
-static bool ggml_are_same_layout(const struct ggml_tensor * a, const struct ggml_tensor * b) {
+static bool ggml_are_same_layout_alloc(const struct ggml_tensor * a, const struct ggml_tensor * b) {
     if (a->type != b->type) {
         return false;
     }
@@ -184,7 +184,7 @@ static bool ggml_are_same_layout(const struct ggml_tensor * a, const struct ggml
 void ggml_backend_tensor_copy(struct ggml_tensor * src, struct ggml_tensor * dst) {
     //printf("src: %s ne: [%d %d %d %d] nb: [%d %d %d %d]\n", src->name, (int)src->ne[0], (int)src->ne[1], (int)src->ne[2], (int)src->ne[3], (int)src->nb[0], (int)src->nb[1], (int)src->nb[2], (int)src->nb[3]);
     //printf("dst: %s ne: [%d %d %d %d] nb: [%d %d %d %d]\n", dst->name, (int)dst->ne[0], (int)dst->ne[1], (int)dst->ne[2], (int)dst->ne[3], (int)dst->nb[0], (int)dst->nb[1], (int)dst->nb[2], (int)dst->nb[3]);
-    GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
+    GGML_ASSERT(ggml_are_same_layout_alloc(src, dst) && "cannot copy tensors with different layouts");
 
     // fprintf(stderr, "cpy tensor %s from %s to %s (%lu bytes)\n", src->name, ggml_backend_name(src->backend), ggml_backend_name(dst->backend), ggml_nbytes(src));
 

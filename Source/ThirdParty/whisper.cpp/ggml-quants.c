@@ -1368,7 +1368,12 @@ static float make_qkx2_quants(int n, int nmax, const float * restrict x, const f
     float max = x[0];
     float sum_w = weights[0];
     float sum_x = sum_w * x[0];
+#ifdef HAVE_BUGGY_APPLE_LINKER
+    // use 'volatile' to prevent unroll and work around a bug in Apple ld64 1015.7
+    for (volatile int i = 1; i < n; ++i) {
+#else
     for (int i = 1; i < n; ++i) {
+#endif
         if (x[i] < min) min = x[i];
         if (x[i] > max) max = x[i];
         float w = weights[i];
@@ -4032,8 +4037,8 @@ void ggml_vec_dot_q2_K_q8_K(const int n, float * restrict s, const void * restri
 
 void ggml_vec_dot_q2_K_q8_K(const int n, float * restrict s, const void * restrict vx, const void * restrict vy) {
 
-    const block_q2_K * restrict x = vx;
-    const block_q8_K * restrict y = vy;
+    const block_q2_K * restrict x = (block_q2_K*)vx;
+    const block_q8_K * restrict y = (block_q8_K*)vy;
 
     const int nb = n / QK_K;
 
@@ -4853,8 +4858,8 @@ void ggml_vec_dot_q3_K_q8_K(const int n, float * restrict s, const void * restri
 void ggml_vec_dot_q3_K_q8_K(const int n, float * restrict s, const void * restrict vx, const void * restrict vy) {
     assert(n % QK_K == 0);
 
-    const block_q3_K * restrict x = vx;
-    const block_q8_K * restrict y = vy;
+    const block_q3_K * restrict x = (block_q3_K*)vx;
+    const block_q8_K * restrict y = (block_q8_K*)vy;
 
     const int nb = n / QK_K;
 
@@ -5592,8 +5597,8 @@ void ggml_vec_dot_q4_K_q8_K(const int n, float * restrict s, const void * restri
 void ggml_vec_dot_q4_K_q8_K(const int n, float * restrict s, const void * restrict vx, const void * restrict vy) {
     assert(n % QK_K == 0);
 
-    const block_q4_K * restrict x = vx;
-    const block_q8_K * restrict y = vy;
+    const block_q4_K * restrict x = (block_q4_K*)vx;
+    const block_q8_K * restrict y = (block_q8_K*)vy;
 
     const int nb = n / QK_K;
 
@@ -6300,8 +6305,8 @@ void ggml_vec_dot_q5_K_q8_K(const int n, float * restrict s, const void * restri
 void ggml_vec_dot_q5_K_q8_K(const int n, float * restrict s, const void * restrict vx, const void * restrict vy) {
     assert(n % QK_K == 0);
 
-    const block_q5_K * restrict x = vx;
-    const block_q8_K * restrict y = vy;
+    const block_q5_K * restrict x = (block_q5_K*)vx;
+    const block_q8_K * restrict y = (block_q8_K*)vy;
 
     const int nb = n / QK_K;
 
@@ -7065,8 +7070,8 @@ void ggml_vec_dot_q6_K_q8_K(const int n, float * restrict s, const void * restri
 void ggml_vec_dot_q6_K_q8_K(const int n, float * restrict s, const void * restrict vx, const void * restrict vy) {
     assert(n % QK_K == 0);
 
-    const block_q6_K * restrict x = vx;
-    const block_q8_K * restrict y = vy;
+    const block_q6_K * restrict x = (block_q6_K*)vx;
+    const block_q8_K * restrict y = (block_q8_K*)vy;
 
     const int nb = n / QK_K;
 
