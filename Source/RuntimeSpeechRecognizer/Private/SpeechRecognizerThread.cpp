@@ -320,10 +320,21 @@ FSpeechRecognizerThread::FSpeechRecognizerThread()
 	: bIsStopped(true)
 , bIsFinished(true)
 {
-	whisper_set_log_callback([](const char* Line)
+	whisper_log_set([](enum ggml_log_level Level, const char* Text, void* UserData)
 	{
-		UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("%s"), *FString(Line));
-	});
+		if (Level == GGML_LOG_LEVEL_ERROR)
+		{
+			UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("%s"), *FString(Text));
+		}
+		else if (Level == GGML_LOG_LEVEL_WARN)
+		{
+			UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("%s"), *FString(Text));
+		}
+		else
+		{
+			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("%s"), *FString(Text));
+		}
+	}, nullptr);
 }
 
 FSpeechRecognizerThread::~FSpeechRecognizerThread()
