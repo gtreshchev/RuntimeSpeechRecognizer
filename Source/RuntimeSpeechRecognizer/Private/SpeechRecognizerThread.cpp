@@ -89,7 +89,7 @@ bool WhisperEncoderBeginCallback(whisper_context* WhisperContext, whisper_state*
 	return true;
 }
 
-/*void WhisperProgressCallback(whisper_context* WhisperContext, whisper_state* WhisperState, int Progress, void* UserData)
+void WhisperProgressCallback(whisper_context* WhisperContext, whisper_state* WhisperState, int Progress, void* UserData)
 {
 	if (!UserData)
 	{
@@ -104,12 +104,14 @@ bool WhisperEncoderBeginCallback(whisper_context* WhisperContext, whisper_state*
 		return;
 	}
 
+	// There is a bug in the whisper library where the progress callback is sometimes called with a value larger than 100
+	Progress = FMath::Clamp(Progress, 0, 100);
 	AsyncTask(ENamedThreads::AnyThread, [SpeechRecognizerSharedPtr, Progress]() mutable
 	{
 		UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Speech recognition progress: %d"), Progress);
 		SpeechRecognizerSharedPtr->OnRecognitionProgress.ExecuteIfBound(Progress);
 	});
-}*/
+}
 
 FWhisperSpeechRecognizerState::FWhisperSpeechRecognizerState()
 	: WhisperContext(nullptr)
@@ -153,24 +155,38 @@ void FWhisperSpeechRecognizerState::Release()
 	WhisperUserData = FWhisperSpeechRecognizerUserData();
 }
 
+FSpeechRecognitionParameters FSpeechRecognitionParameters::GetNonStreamingDefaults()
+{
+	// These are the default values for the whisper.cpp library
+	FSpeechRecognitionParameters Parameters;
+	Parameters.bNoContext = false;
+	Parameters.bSingleSegment = false;
+	Parameters.MaxTokens = 0;
+	Parameters.AudioContextSize = 0;
+	Parameters.TemperatureToIncrease = 0.4f;
+	return Parameters;
+}
+
+FSpeechRecognitionParameters FSpeechRecognitionParameters::GetStreamingDefaults()
+{
+	// Taken from https://github.com/ggerganov/whisper.cpp/blob/master/examples/stream.wasm/emscripten.cpp
+	FSpeechRecognitionParameters Parameters;
+	Parameters.bNoContext = true;
+	Parameters.bSingleSegment = true;
+	Parameters.MaxTokens = 32;
+	Parameters.AudioContextSize = 768;
+	Parameters.TemperatureToIncrease = -1.0f;
+	return Parameters;
+}
+
 void FSpeechRecognitionParameters::SetNonStreamingDefaults()
 {
-	// These are the default values for the whisper cpp library
-	bNoContext = false;
-	bSingleSegment = false;
-	MaxTokens = 0;
-	AudioContextSize = 0;
-	TemperatureToIncrease = 0.4f;
+	*this = GetNonStreamingDefaults();
 }
 
 void FSpeechRecognitionParameters::SetStreamingDefaults()
 {
-	// Taken from https://github.com/ggerganov/whisper.cpp/blob/master/examples/stream.wasm/emscripten.cpp
-	bNoContext = true;
-	bSingleSegment = true;
-	MaxTokens = 32;
-	AudioContextSize = 768;
-	TemperatureToIncrease = -1.0f;
+	*this = GetStreamingDefaults();
 }
 
 void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechRecognizerState& WhisperState) const
@@ -214,10 +230,10 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 		WhisperState.WhisperParameters->encoder_begin_callback_user_data = &WhisperState.WhisperUserData;
 	}
 
-	/*{
+	{
 		WhisperState.WhisperParameters->progress_callback = WhisperProgressCallback;
 		WhisperState.WhisperParameters->progress_callback_user_data = &WhisperState.WhisperUserData;
-	}*/
+	}
 }
 
 bool FSpeechRecognizerThread::FPendingAudioData::AddAudio(Audio::FAlignedFloatBuffer&& AudioData, float SampleRate, uint32 NumOfChannels)
@@ -383,7 +399,7 @@ TFuture<bool> FSpeechRecognizerThread::StartThread()
 		}
 	}
 
-	auto OnLanguageModelLoaded = [this, ThisShared](bool bSuccess, uint8* ModelBulkDataPtr, int64 ModelBulkDataSize)
+	auto OnLanguageModelLoaded = [ThisShared](bool bSuccess, uint8* ModelBulkDataPtr, int64 ModelBulkDataSize)
 	{
 		if (!ThisShared.IsValid())
 		{
@@ -393,7 +409,7 @@ TFuture<bool> FSpeechRecognizerThread::StartThread()
 
 		if (!bSuccess)
 		{
-			StartThreadPromise->SetValue(false);
+			ThisShared->StartThreadPromise->SetValue(false);
 			return;
 		}
 
@@ -636,9 +652,15 @@ uint32 FSpeechRecognizerThread::Run()
 		if (PendingAudio.GetTotalMixedAndResampledSize() == 0 && !bIsFinished)
 		{
 			bIsFinished.AtomicSet(true);
-			AsyncTask(ENamedThreads::AnyThread, [this]()
+			TSharedPtr<FSpeechRecognizerThread> ThisShared = AsShared();
+			AsyncTask(ENamedThreads::AnyThread, [ThisShared]()
 			{
-				OnRecognitionFinished.ExecuteIfBound();
+				if (!ThisShared.IsValid())
+				{
+					UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
+					return;
+				}
+				ThisShared->OnRecognitionFinished.ExecuteIfBound();
 			});
 		}
 	}
@@ -677,16 +699,14 @@ bool FSpeechRecognizerThread::SetRecognitionParameters(const FSpeechRecognitionP
 	return true;
 }
 
-bool FSpeechRecognizerThread::SetStreamingDefaults()
+FSpeechRecognitionParameters FSpeechRecognizerThread::GetNonStreamingDefaults()
 {
-	if (!GetIsStopped())
-	{
-		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Cannot set streaming defaults while the thread is running"));
-		return false;
-	}
+	return FSpeechRecognitionParameters::GetNonStreamingDefaults();
+}
 
-	RecognitionParameters.SetStreamingDefaults();
-	return true;
+FSpeechRecognitionParameters FSpeechRecognizerThread::GetStreamingDefaults()
+{
+	return FSpeechRecognitionParameters::GetStreamingDefaults();
 }
 
 bool FSpeechRecognizerThread::SetNonStreamingDefaults()
@@ -698,6 +718,18 @@ bool FSpeechRecognizerThread::SetNonStreamingDefaults()
 	}
 
 	RecognitionParameters.SetNonStreamingDefaults();
+	return true;
+}
+
+bool FSpeechRecognizerThread::SetStreamingDefaults()
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Cannot set streaming defaults while the thread is running"));
+		return false;
+	}
+
+	RecognitionParameters.SetStreamingDefaults();
 	return true;
 }
 
