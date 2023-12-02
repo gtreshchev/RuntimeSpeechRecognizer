@@ -944,7 +944,7 @@ void FSpeechRecognizerThread::LoadLanguageModel(TFunction<void(bool, uint8*, int
 
 	TSoftObjectPtr<USpeechRecognizerModel> LazySpeechRecognizerModel = TSoftObjectPtr<USpeechRecognizerModel>(FSoftObjectPath(AssetPath));
 	UAssetManager::GetStreamableManager().RequestAsyncLoad(LazySpeechRecognizerModel.ToSoftObjectPath(),
-		[ThisShared, OnLoadLanguageModel = MoveTemp(OnLoadLanguageModel), LazySpeechRecognizerModel, AssetPath]()
+		[ThisShared, OnLoadLanguageModel = MoveTemp(OnLoadLanguageModel), LazySpeechRecognizerModel, AssetPath]() mutable
 		{
 			if (!ThisShared.IsValid())
 			{
@@ -952,30 +952,55 @@ void FSpeechRecognizerThread::LoadLanguageModel(TFunction<void(bool, uint8*, int
 				return;
 			}
 
-			if (!LazySpeechRecognizerModel.Get())
+			AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [ThisShared, OnLoadLanguageModel = MoveTemp(OnLoadLanguageModel), LazySpeechRecognizerModel, AssetPath]() mutable
 			{
-				const FString ShortErrorMessage = TEXT("Language model loading failed");
-				const FString LongErrorMessage = FString::Printf(TEXT("Failed to load the language model asset '%s'"), *AssetPath);
-				ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
-				OnLoadLanguageModel(false, nullptr, 0);
-				return;
-			}
+				if (!ThisShared.IsValid())
+				{
+					UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
+					return;
+				}
 
-			TStrongObjectPtr<USpeechRecognizerModel> SpeechRecognizerModel = TStrongObjectPtr<USpeechRecognizerModel>(LazySpeechRecognizerModel.Get());
+				if (!LazySpeechRecognizerModel.Get())
+				{
+					const FString ShortErrorMessage = TEXT("Language model loading failed");
+					const FString LongErrorMessage = FString::Printf(TEXT("Failed to load the language model asset '%s'"), *AssetPath);
+					ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
+					OnLoadLanguageModel(false, nullptr, 0);
+					return;
+				}
 
-			uint8* ModelBulkDataPtr = nullptr;
-			SpeechRecognizerModel->LanguageModelBulkData.GetCopy(reinterpret_cast<void**>(&ModelBulkDataPtr), true);
-			const int64 ModelBulkDataSize = SpeechRecognizerModel->LanguageModelBulkData.GetBulkDataSize();
+				USpeechRecognizerModel* SpeechRecognizerModel = LazySpeechRecognizerModel.Get();
+				SpeechRecognizerModel->SetInternalFlags(EInternalObjectFlags::Async);
 
-			if (!ModelBulkDataPtr)
-			{
-				const FString ShortErrorMessage = TEXT("Language model buffer retrieval failed");
-				const FString LongErrorMessage = FString::Printf(TEXT("Failed to retrieve the buffer data of the language model from the asset '%s'"), *AssetPath);
-				ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
-				OnLoadLanguageModel(false, nullptr, 0);
-				return;
-			}
-			OnLoadLanguageModel(true, ModelBulkDataPtr, ModelBulkDataSize);
+				uint8* ModelBulkDataPtr = nullptr;
+				SpeechRecognizerModel->LanguageModelBulkData.GetCopy(reinterpret_cast<void**>(&ModelBulkDataPtr), true);
+				const int64 ModelBulkDataSize = SpeechRecognizerModel->LanguageModelBulkData.GetBulkDataSize();
+
+				if (!ModelBulkDataPtr)
+				{
+					const FString ShortErrorMessage = TEXT("Language model buffer retrieval failed");
+					const FString LongErrorMessage = FString::Printf(TEXT("Failed to retrieve the buffer data of the language model from the asset '%s'"), *AssetPath);
+					ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
+					OnLoadLanguageModel(false, nullptr, 0);
+					return;
+				}
+
+				AsyncTask(ENamedThreads::GameThread, [ThisShared, SpeechRecognizerModel, ModelBulkDataPtr, ModelBulkDataSize, OnLoadLanguageModel = MoveTemp(OnLoadLanguageModel)]() mutable
+				{
+					if (!ThisShared.IsValid())
+					{
+						UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
+						FMemory::Free(ModelBulkDataPtr);
+						return;
+					}
+
+					if (SpeechRecognizerModel->IsValidLowLevel())
+					{
+						SpeechRecognizerModel->ClearInternalFlags(EInternalObjectFlags::Async);
+					}
+					OnLoadLanguageModel(true, ModelBulkDataPtr, ModelBulkDataSize);
+				});
+			});
 		}, FStreamableManager::AsyncLoadHighPriority);
 }
 
