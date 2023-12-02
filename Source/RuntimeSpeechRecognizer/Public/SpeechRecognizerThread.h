@@ -30,7 +30,7 @@ DECLARE_DELEGATE_OneParam(FOnSpeechRecognizedTextSegment, const FString&);
 DECLARE_DELEGATE_TwoParams(FOnSpeechRecognitionError, const FString& /* ShortErrorMessage */, const FString& /* LongErrorMessage */);
 
 /** Static delegate for speech recognition progress. The progress value is passed as a parameter */
-//DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionProgress, int32 /* ProgressValue */);
+DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionProgress, int32 /* Progress */);
 
 /**
  * User data for Whisper speech recognizer
@@ -142,6 +142,18 @@ struct RUNTIMESPEECHRECOGNIZER_API FSpeechRecognitionParameters
 	int32 BeamSize = -1.f;
 
 	/**
+	 * Returns the default parameters suitable for non-streaming speech recognition
+	 * @return The default parameters suitable for non-streaming speech recognition
+	 */
+	static FSpeechRecognitionParameters GetNonStreamingDefaults();
+
+	/**
+	 * Returns the default parameters suitable for streaming speech recognition
+	 * @return The default parameters suitable for streaming speech recognition
+	 */
+	static FSpeechRecognitionParameters GetStreamingDefaults();
+
+	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
 	 */
 	void SetNonStreamingDefaults();
@@ -227,7 +239,7 @@ public:
 	FOnSpeechRecognizedTextSegment OnRecognizedTextSegment;
 
 	/** Delegate broadcast when the speech recognition progress changes */
-	/*FOnSpeechRecognitionProgress OnRecognitionProgress;*/
+	FOnSpeechRecognitionProgress OnRecognitionProgress;
 
 	/** Delegate broadcast when an error occurs during speech recognition */
 	FOnSpeechRecognitionError OnRecognitionError;
@@ -242,12 +254,16 @@ public:
 	bool SetRecognitionParameters(const FSpeechRecognitionParameters& Parameters);
 
 	/**
-	 * Sets the default parameters suitable for streaming speech recognition
-	 *
-	 * @return True if the parameters were set successfully, false otherwise
-	 * @note Can only be called when the thread worker is stopped
+	 * Returns the default parameters suitable for non-streaming speech recognition
+	 * @return The default parameters suitable for non-streaming speech recognition
 	 */
-	bool SetStreamingDefaults();
+	static FSpeechRecognitionParameters GetNonStreamingDefaults();
+
+	/**
+	 * Returns the default parameters suitable for streaming speech recognition
+	 * @return The default parameters suitable for streaming speech recognition
+	 */
+	static FSpeechRecognitionParameters GetStreamingDefaults();
 
 	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
@@ -256,6 +272,14 @@ public:
 	 * @note Can only be called when the thread worker is stopped
 	 */
 	bool SetNonStreamingDefaults();
+
+	/**
+	 * Sets the default parameters suitable for streaming speech recognition
+	 *
+	 * @return True if the parameters were set successfully, false otherwise
+	 * @note Can only be called when the thread worker is stopped
+	 */
+	bool SetStreamingDefaults();
 
 	/**
 	 * Sets the number of threads to use for speech recognition

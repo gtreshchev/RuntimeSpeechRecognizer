@@ -27,11 +27,11 @@ USpeechRecognizer::USpeechRecognizer()
 		OnRecognizedTextSegmentNative.Broadcast(RecognizedWords);
 	});
 
-	/*Thread->OnRecognitionProgress.BindWeakLambda(this, [this](int32 Progress)
+	Thread->OnRecognitionProgress.BindWeakLambda(this, [this](int32 Progress)
 	{
 		OnRecognitionProgress.Broadcast(Progress);
 		OnRecognitionProgressNative.Broadcast(Progress);
-	});*/
+	});
 }
 
 USpeechRecognizer* USpeechRecognizer::CreateSpeechRecognizer()
@@ -84,14 +84,24 @@ bool USpeechRecognizer::SetRecognitionParameters(const FSpeechRecognitionParamet
 	return Thread->SetRecognitionParameters(Parameters);
 }
 
-bool USpeechRecognizer::SetStreamingDefaults()
+FSpeechRecognitionParameters USpeechRecognizer::GetNonStreamingDefaults()
 {
-	return Thread->SetStreamingDefaults();
+	return FSpeechRecognizerThread::GetNonStreamingDefaults();
+}
+
+FSpeechRecognitionParameters USpeechRecognizer::GetStreamingDefaults()
+{
+	return FSpeechRecognizerThread::GetStreamingDefaults();
 }
 
 bool USpeechRecognizer::SetNonStreamingDefaults()
 {
 	return Thread->SetNonStreamingDefaults();
+}
+
+bool USpeechRecognizer::SetStreamingDefaults()
+{
+	return Thread->SetStreamingDefaults();
 }
 
 bool USpeechRecognizer::SetNumOfThreads(int32 Value)

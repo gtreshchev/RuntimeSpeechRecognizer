@@ -4659,7 +4659,7 @@ struct ggml_tensor * ggml_permute(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
 
-    int32_t params[] = { axis0, axis1, axis2, axis3 };
+    int32_t params[] = { int32_t(axis0), int32_t(axis1), int32_t(axis2), int32_t(axis3) };
     ggml_set_op_params(result, params, sizeof(params));
 
     return result;
@@ -4783,7 +4783,7 @@ static struct ggml_tensor * ggml_diag_mask_inf_impl(
 
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
 
-    int32_t params[] = { n_past };
+    int32_t params[] = { int32_t(n_past) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op   = GGML_OP_DIAG_MASK_INF;
@@ -4822,7 +4822,7 @@ static struct ggml_tensor * ggml_diag_mask_zero_impl(
 
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
 
-    int32_t params[] = { n_past };
+    int32_t params[] = { int32_t(n_past) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op   = GGML_OP_DIAG_MASK_ZERO;
@@ -5218,7 +5218,7 @@ GGML_API struct ggml_tensor * ggml_conv_transpose_1d(
     };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
 
-    int32_t params[] = { s0, p0, d0 };
+    int32_t params[] = { int32_t(s0), int32_t(p0), int32_t(d0) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op = GGML_OP_CONV_TRANSPOSE_1D;
@@ -5270,7 +5270,7 @@ struct ggml_tensor * ggml_im2col(
     };
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, 4, ne);
-    int32_t params[] = { s0, s1, p0, p1, d0, d1, (is_2D ? 1 : 0) };
+    int32_t params[] = { int32_t(s0), int32_t(s1), int32_t(p0), int32_t(p1), int32_t(d0), int32_t(d1), (is_2D ? int32_t(1) : int32_t(0)) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op = GGML_OP_IM2COL;
@@ -5390,7 +5390,7 @@ struct ggml_tensor * ggml_pool_1d(
     };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, ne);
 
-    int32_t params[] = { op, k0, s0, p0 };
+    int32_t params[] = { int32_t(op), int32_t(k0), int32_t(s0), int32_t(p0) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op = GGML_OP_POOL_1D;
@@ -5427,7 +5427,7 @@ struct ggml_tensor * ggml_pool_2d(
     };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 3, ne);
 
-    int32_t params[] = { op, k0, k1, s0, s1, p0, p1 };
+    int32_t params[] = { int32_t(op), int32_t(k0), int32_t(k1), int32_t(s0), int32_t(s1), int32_t(p0), int32_t(p1) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op = GGML_OP_POOL_2D;
@@ -5641,7 +5641,7 @@ struct ggml_tensor * ggml_win_part(
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
 
-    int32_t params[] = { npx, npy, w };
+    int32_t params[] = { int32_t(npx), int32_t(npy), int32_t(w) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op   = GGML_OP_WIN_PART;
@@ -5671,7 +5671,7 @@ struct ggml_tensor * ggml_win_unpart(
     const int64_t ne[4] = { a->ne[0], w0, h0, 1, };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 3, ne);
 
-    int32_t params[] = { w };
+    int32_t params[] = { int32_t(w) };
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op   = GGML_OP_WIN_UNPART;

@@ -36,10 +36,10 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FOnSpeechRecognitionErrorStatic, const FStr
 
 
 /** Dynamic delegate for speech recognition progress */
-/*DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressDynamic, int32, Progress);*/
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressDynamic, int32, Progress);
 
 /** Static delegate for speech recognition progress */
-/*DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressStatic, int32);*/
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgressStatic, int32);
 
 
 /**
@@ -150,11 +150,11 @@ public:
 	FOnSpeechRecognitionErrorStatic OnRecognitionErrorNative;
 
 	/** Dynamic delegate broadcast when the speech recognition progress obtained */
-	/*UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
-	FOnSpeechRecognitionProgressDynamic OnRecognitionProgress;*/
+	UPROPERTY(BlueprintAssignable, Category = "Runtime Speech Recognizer|Delegates")
+	FOnSpeechRecognitionProgressDynamic OnRecognitionProgress;
 
 	/*** Static delegate broadcast when the speech recognition progress obtained */
-	/*FOnSpeechRecognitionProgressStatic OnRecognitionProgressNative;*/
+	FOnSpeechRecognitionProgressStatic OnRecognitionProgressNative;
 
 	/**
 	 * Sets the parameters for speech recognition. If you want to change only specific parameters, consider using the individual setter functions
@@ -167,13 +167,18 @@ public:
 	bool SetRecognitionParameters(const FSpeechRecognitionParameters& Parameters);
 
 	/**
-	 * Sets the default parameters suitable for streaming speech recognition
-	 *
-	 * @return True if the parameters were set successfully, false otherwise
-	 * @note Can only be called when the thread worker is stopped
+	 * Returns the default parameters suitable for non-streaming speech recognition
+	 * @return The default parameters suitable for non-streaming speech recognition
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|All")
-	bool SetStreamingDefaults();
+	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Setters|All")
+	static FSpeechRecognitionParameters GetNonStreamingDefaults();
+
+	/**
+	 * Returns the default parameters suitable for streaming speech recognition
+	 * @return The default parameters suitable for streaming speech recognition
+	 */
+	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Setters|All")
+	static FSpeechRecognitionParameters GetStreamingDefaults();
 
 	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
@@ -183,6 +188,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|All")
 	bool SetNonStreamingDefaults();
+
+	/**
+	 * Sets the default parameters suitable for streaming speech recognition
+	 *
+	 * @return True if the parameters were set successfully, false otherwise
+	 * @note Can only be called when the thread worker is stopped
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|All")
+	bool SetStreamingDefaults();
 
 	/**
 	 * Sets the number of threads to use for speech recognition
