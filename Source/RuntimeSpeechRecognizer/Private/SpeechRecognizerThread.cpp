@@ -660,6 +660,7 @@ uint32 FSpeechRecognizerThread::Run()
 					UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
 					return;
 				}
+				ThisShared->OnRecognitionProgress.ExecuteIfBound(100);
 				ThisShared->OnRecognitionFinished.ExecuteIfBound();
 			});
 		}
