@@ -87,6 +87,11 @@ void USpeechRecognizer::ForceProcessPendingAudioData()
 	Thread->ForceProcessPendingAudioData();
 }
 
+void USpeechRecognizer::ClearAudioData(bool bClearPendingAudioData, bool bClearAudioQueue)
+{
+	Thread->ClearAudioData(bClearPendingAudioData, bClearAudioQueue);
+}
+
 bool USpeechRecognizer::GetIsStopped() const
 {
 	return Thread->GetIsStopped();

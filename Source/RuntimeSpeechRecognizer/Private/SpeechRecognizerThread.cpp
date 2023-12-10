@@ -57,8 +57,11 @@ void WhisperNewTextSegmentCallback(whisper_context* WhisperContext, whisper_stat
 
 		AsyncTask(ENamedThreads::AnyThread, [SpeechRecognizerSharedPtr, TextPerSegment_String = MoveTemp(TextPerSegment_String)]() mutable
 		{
-			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Recognized text segment: \"%s\""), *TextPerSegment_String);
-			SpeechRecognizerSharedPtr->OnRecognizedTextSegment.Broadcast(TextPerSegment_String);
+			if (SpeechRecognizerSharedPtr.IsValid())
+			{
+				UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Recognized text segment: \"%s\""), *TextPerSegment_String);
+				SpeechRecognizerSharedPtr->OnRecognizedTextSegment.Broadcast(TextPerSegment_String);
+			}
 		});
 	}
 }
@@ -356,7 +359,6 @@ FSpeechRecognizerThread::FSpeechRecognizerThread()
 
 FSpeechRecognizerThread::~FSpeechRecognizerThread()
 {
-	bIsDestroyed.AtomicSet(true);
 	StopThread();
 
 	if (Thread.IsValid())
@@ -476,6 +478,9 @@ TFuture<bool> FSpeechRecognizerThread::StartThread()
 			}
 		}
 
+		ThisShared->Thread.Reset();
+
+		ThisShared->bIsStopping.AtomicSet(false);
 		ThisShared->RecognitionParameters.FillWhisperStateParameters(ThisShared->WhisperState);
 		ThisShared->bIsStopped.AtomicSet(false);
 		ThisShared->bIsFinished.AtomicSet(true);
@@ -500,7 +505,17 @@ TFuture<bool> FSpeechRecognizerThread::StartThread()
 
 void FSpeechRecognizerThread::StopThread()
 {
-	Stop();
+	if (DoesSharedInstanceExist())
+	{
+		TSharedPtr<FSpeechRecognizerThread> ThisShared = AsShared();
+		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [ThisShared]() mutable
+		{
+			if (ThisShared)
+			{
+				ThisShared->Thread.Reset();
+			}
+		});
+	}
 }
 
 void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData, float SampleRate, uint32 NumOfChannels, bool bLast)
@@ -655,6 +670,18 @@ void FSpeechRecognizerThread::ForceProcessPendingAudioData()
 	UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Enqueued audio data from the pending audio to the queue of the speech recognizer as the last data (num of samples: %d)"), NumOfQueuedSamples);
 }
 
+void FSpeechRecognizerThread::ClearAudioData(bool bClearPendingAudioData, bool bClearAudioQueue)
+{
+	if (bClearPendingAudioData)
+	{
+		PendingAudio = FPendingAudioData();
+	}
+	if (bClearAudioQueue)
+	{
+		AudioQueue.Empty();
+	}
+}
+
 bool FSpeechRecognizerThread::Init()
 {
 	if (GetIsStopped())
@@ -697,7 +724,7 @@ uint32 FSpeechRecognizerThread::Run()
 			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Processed audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
 		}
 
-		if (PendingAudio.GetTotalMixedAndResampledSize() == 0 && !GetIsFinished())
+		if (DoesSharedInstanceExist() && PendingAudio.GetTotalMixedAndResampledSize() == 0 && !GetIsFinished())
 		{
 			bIsFinished.AtomicSet(true);
 			TSharedPtr<FSpeechRecognizerThread> ThisShared = AsShared();
@@ -719,7 +746,7 @@ uint32 FSpeechRecognizerThread::Run()
 
 	if (GetIsStopped())
 	{
-		if (!bIsDestroyed)
+		if (DoesSharedInstanceExist())
 		{
 			TSharedPtr<FSpeechRecognizerThread> ThisShared = AsShared();
 			AsyncTask(ENamedThreads::AnyThread, [ThisShared]()
@@ -732,9 +759,6 @@ uint32 FSpeechRecognizerThread::Run()
 				ThisShared->OnRecognitionStopped.Broadcast();
 			});
 		}
-		bIsStopped.AtomicSet(true);
-		bIsFinished.AtomicSet(true);
-		bIsStopping.AtomicSet(false);
 	}
 
 	return 0;
@@ -751,6 +775,9 @@ void FSpeechRecognizerThread::Stop()
 
 void FSpeechRecognizerThread::Exit()
 {
+	bIsStopping.AtomicSet(false);
+	bIsStopped.AtomicSet(true);
+	bIsFinished.AtomicSet(true);
 	ReleaseMemory();
 	FRunnable::Exit();
 }
@@ -1182,10 +1209,21 @@ void FSpeechRecognizerThread::LoadLanguageModel(TFunction<void(bool, uint8*, int
 void FSpeechRecognizerThread::ReleaseMemory()
 {
 	WhisperState.Release();
+	Thread.Reset();
 }
 
 void FSpeechRecognizerThread::ReportError(const FString& ShortErrorMessage, const FString& LongErrorMessage)
 {
-	UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("%s: %s"), *ShortErrorMessage, *LongErrorMessage);
-	OnRecognitionError.Broadcast(ShortErrorMessage, LongErrorMessage);
+	if (DoesSharedInstanceExist())
+	{
+		TSharedPtr<FSpeechRecognizerThread> ThisShared = AsShared();
+		AsyncTask(ENamedThreads::AnyThread, [ThisShared, ShortErrorMessage, LongErrorMessage]() mutable
+		{
+			if (ThisShared)
+			{
+				UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("%s: %s"), *ShortErrorMessage, *LongErrorMessage);
+				ThisShared->OnRecognitionError.Broadcast(ShortErrorMessage, LongErrorMessage);
+			}
+		});
+	}
 }

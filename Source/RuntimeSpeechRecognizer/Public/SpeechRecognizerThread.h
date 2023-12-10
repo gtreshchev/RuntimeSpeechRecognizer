@@ -215,6 +215,14 @@ public:
 	 */
 	void ForceProcessPendingAudioData();
 
+	/**
+	 * Clears the audio data that was queued before but not yet processed
+	 *
+	 * @param bClearPendingAudioData Whether to clear the pending audio data or not
+	 * @param bClearAudioQueue Whether to clear the audio queue or not
+	 */
+	void ClearAudioData(bool bClearPendingAudioData, bool bClearAudioQueue);
+
 	//~ Begin FRunnable Interface
 	virtual bool Init() override;
 	virtual uint32 Run() override;
@@ -462,9 +470,6 @@ private:
 	/** Whether the thread worker is currently stopping (but not yet stopped) */
 	FThreadSafeBool bIsStopping;
 
-	/** Whether the thread worker is destroyed or not */
-	FThreadSafeBool bIsDestroyed;
-
 	/** Thread instance */
 	TUniquePtr<FRunnableThread> Thread;
 
@@ -476,6 +481,38 @@ private:
 	 */
 	struct FPendingAudioData
 	{
+		FPendingAudioData() = default;
+		FPendingAudioData(FPendingAudioData&& Other) noexcept
+		{
+			*this = MoveTemp(Other);
+		}
+		FPendingAudioData(const FPendingAudioData& Other) noexcept
+		{
+			*this = Other;
+		}
+
+		FPendingAudioData& operator=(FPendingAudioData&& Other) noexcept
+		{
+			if (this != &Other)
+			{
+				FScopeLock Lock(&DataGuard);
+				AudioDataMap = MoveTemp(Other.AudioDataMap);
+				TotalMixedAndResampledSize.store(Other.TotalMixedAndResampledSize);
+			}
+			return *this;
+		}
+
+		FPendingAudioData& operator=(const FPendingAudioData& Other) noexcept
+		{
+			if (this != &Other)
+			{
+				FScopeLock Lock(&DataGuard);
+				AudioDataMap = Other.AudioDataMap;
+				TotalMixedAndResampledSize.store(Other.TotalMixedAndResampledSize);
+			}
+			return *this;
+		}
+
 		/**
 		 * Adds audio data to the pending audio data
 		 * 
