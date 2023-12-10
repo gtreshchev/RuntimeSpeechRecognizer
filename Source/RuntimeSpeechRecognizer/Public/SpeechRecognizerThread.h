@@ -20,17 +20,20 @@ class USpeechRecognizerSettings;
 struct whisper_context;
 struct whisper_full_params;
 
-/** Static delegate for speech recognition finished */
-DECLARE_DELEGATE(FOnSpeechRecognitionFinished);
+/** Static delegate for speech recognition finished recognizing all the queued audio data */
+DECLARE_MULTICAST_DELEGATE(FOnSpeechRecognitionFinished);
 
 /** Static delegate for recognized words. The recognized text segment is passed as a parameter */
-DECLARE_DELEGATE_OneParam(FOnSpeechRecognizedTextSegment, const FString&);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognizedTextSegment, const FString&);
 
 /** Static delegate for speech recognition errors. The error message and long error message are passed as parameters */
-DECLARE_DELEGATE_TwoParams(FOnSpeechRecognitionError, const FString& /* ShortErrorMessage */, const FString& /* LongErrorMessage */);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnSpeechRecognitionError, const FString& /* ShortErrorMessage */, const FString& /* LongErrorMessage */);
 
 /** Static delegate for speech recognition progress. The progress value is passed as a parameter */
-DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionProgress, int32 /* Progress */);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSpeechRecognitionProgress, int32 /* Progress */);
+
+/** Dynamic delegate for speech recognition thread fully stopped */
+DECLARE_MULTICAST_DELEGATE(FOnSpeechRecognitionStopped);
 
 /**
  * User data for Whisper speech recognizer
@@ -187,6 +190,7 @@ public:
 	TFuture<bool> StartThread();
 
 private:
+	/** Promise for starting the thread. Invalidated once the thread is fully started */
 	TUniquePtr<TPromise<bool>> StartThreadPromise;
 
 public:
@@ -226,6 +230,14 @@ public:
 	bool GetIsStopped() const;
 
 	/**
+	 * Returns whether the thread worker is currently stopping (but not yet stopped) or not
+	 * It is set to true when the StopThread function is called, and set to false when the thread worker is fully stopped
+	 * 
+	 * @return True if the thread worker is currently stopping, false otherwise 
+	 */
+	bool GetIsStopping() const;
+
+	/**
 	 * Returns whether all the audio data has been processed or not
 	 *
 	 * @return True if all the audio data has been processed, false otherwise
@@ -243,6 +255,9 @@ public:
 
 	/** Delegate broadcast when an error occurs during speech recognition */
 	FOnSpeechRecognitionError OnRecognitionError;
+
+	/** Delegate broadcast when the speech recognition thread fully stopped */
+	FOnSpeechRecognitionStopped OnRecognitionStopped;
 
 	/**
 	 * Sets the parameters for speech recognition. If you want to change only specific parameters, consider using the individual setter functions
@@ -444,6 +459,12 @@ private:
 	/**	Whether all the audio data has been processed or not */
 	FThreadSafeBool bIsFinished;
 
+	/** Whether the thread worker is currently stopping (but not yet stopped) */
+	FThreadSafeBool bIsStopping;
+
+	/** Whether the thread worker is destroyed or not */
+	FThreadSafeBool bIsDestroyed;
+
 	/** Thread instance */
 	TUniquePtr<FRunnableThread> Thread;
 
@@ -503,4 +524,8 @@ private:
 
 	/** Recognition parameters */
 	FSpeechRecognitionParameters RecognitionParameters;
+
+public:
+	/** The last progress made in the speech recognition process */
+	std::atomic<int32> LastProgress { 0 };
 };
