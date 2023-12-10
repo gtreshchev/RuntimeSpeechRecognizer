@@ -9,28 +9,34 @@ USpeechRecognizer::USpeechRecognizer()
 	Thread = MakeShared<FSpeechRecognizerThread>();
 	ensure(Thread.IsValid());
 
-	Thread->OnRecognitionFinished.BindWeakLambda(this, [this]()
+	Thread->OnRecognitionFinished.AddWeakLambda(this, [this]()
 	{
 		OnRecognitionFinished.Broadcast();
 		OnRecognitionFinishedNative.Broadcast();
 	});
 
-	Thread->OnRecognitionError.BindWeakLambda(this, [this](const FString& ShortErrorMessage, const FString& LongErrorMessage)
+	Thread->OnRecognitionError.AddWeakLambda(this, [this](const FString& ShortErrorMessage, const FString& LongErrorMessage)
 	{
 		OnRecognitionError.Broadcast(ShortErrorMessage, LongErrorMessage);
 		OnRecognitionErrorNative.Broadcast(ShortErrorMessage, LongErrorMessage);
 	});
 
-	Thread->OnRecognizedTextSegment.BindWeakLambda(this, [this](const FString& RecognizedWords)
+	Thread->OnRecognizedTextSegment.AddWeakLambda(this, [this](const FString& RecognizedWords)
 	{
 		OnRecognizedTextSegment.Broadcast(RecognizedWords);
 		OnRecognizedTextSegmentNative.Broadcast(RecognizedWords);
 	});
 
-	Thread->OnRecognitionProgress.BindWeakLambda(this, [this](int32 Progress)
+	Thread->OnRecognitionProgress.AddWeakLambda(this, [this](int32 Progress)
 	{
 		OnRecognitionProgress.Broadcast(Progress);
 		OnRecognitionProgressNative.Broadcast(Progress);
+	});
+
+	Thread->OnRecognitionStopped.AddWeakLambda(this, [this]()
+	{
+		OnRecognitionStopped.Broadcast();
+		OnRecognitionStoppedNative.Broadcast();
 	});
 }
 
@@ -46,6 +52,18 @@ void USpeechRecognizer::StartSpeechRecognition(const FOnSpeechRecognitionStarted
 
 void USpeechRecognizer::StartSpeechRecognition(const FOnSpeechRecognitionStartedStatic& OnStarted)
 {
+	if (!Thread->GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to start speech recognition: Speech recognition is already running"));
+		OnStarted.ExecuteIfBound(false);
+		return;
+	}
+	if (Thread->GetIsStopping())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to start speech recognition: Speech recognition is stopping"));
+		OnStarted.ExecuteIfBound(false);
+		return;
+	}
 	Thread->StartThread().Next([OnStarted](bool bSucceeded) { OnStarted.ExecuteIfBound(bSucceeded); });
 }
 
@@ -72,6 +90,11 @@ void USpeechRecognizer::ForceProcessPendingAudioData()
 bool USpeechRecognizer::GetIsStopped() const
 {
 	return Thread->GetIsStopped();
+}
+
+bool USpeechRecognizer::GetIsStopping() const
+{
+	return Thread->GetIsStopping();
 }
 
 bool USpeechRecognizer::GetIsFinished() const
