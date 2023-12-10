@@ -14,10 +14,10 @@ DECLARE_DYNAMIC_DELEGATE_OneParam(FOnSpeechRecognitionStartedDynamic, bool, bSuc
 DECLARE_DELEGATE_OneParam(FOnSpeechRecognitionStartedStatic, bool);
 
 
-/** Dynamic delegate for speech recognition finished recognizing all the queued audio data */
+/** Dynamic delegate for speech recognition finished */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSpeechRecognitionFinishedDynamic);
 
-/** Static delegate for speech recognition finished recognizing all the queued audio data */
+/** Static delegate for speech recognition finished */
 DECLARE_MULTICAST_DELEGATE(FOnSpeechRecognitionFinishedStatic);
 
 
@@ -117,6 +117,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Process")
 	void ForceProcessPendingAudioData();
+
+	/**
+	 * Clears the audio data that was queued before but not yet processed
+	 *
+	 * @param bClearPendingAudioData Whether to clear the pending audio data or not
+	 * @param bClearAudioQueue Whether to clear the audio queue or not
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Process")
+	void ClearAudioData(bool bClearPendingAudioData, bool bClearAudioQueue);
 
 	/**
 	 * Returns whether the thread worker is stopped or not
