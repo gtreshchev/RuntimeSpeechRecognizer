@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
+
 #ifndef restrict
 #define restrict
 #endif
@@ -21,15 +23,6 @@
 
 #if !PLATFORM_LITTLE_ENDIAN
 #define GGML_BIG_ENDIAN
-#endif
-
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM)
-#ifndef __ARM_NEON
-#define __ARM_NEON 1
-#endif
-#ifndef __aarch64__
-#define __aarch64__ 1
-#endif
 #endif
 
 // Microsoft Visual Studio
