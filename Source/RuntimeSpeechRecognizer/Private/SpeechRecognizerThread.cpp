@@ -506,7 +506,7 @@ void FSpeechRecognizerThread::StopThread()
 		{
 			if (ThisShared)
 			{
-				ThisShared->Thread.Reset();
+				ThisShared->ReleaseMemory();
 			}
 		});
 	}
@@ -1202,8 +1202,8 @@ void FSpeechRecognizerThread::LoadLanguageModel(TFunction<void(bool, uint8*, int
 
 void FSpeechRecognizerThread::ReleaseMemory()
 {
-	WhisperState.Release();
 	Thread.Reset();
+	WhisperState.Release();
 }
 
 void FSpeechRecognizerThread::ReportError(const FString& ShortErrorMessage, const FString& LongErrorMessage)
