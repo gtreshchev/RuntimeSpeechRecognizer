@@ -359,13 +359,7 @@ FSpeechRecognizerThread::FSpeechRecognizerThread()
 
 FSpeechRecognizerThread::~FSpeechRecognizerThread()
 {
-	StopThread();
-
-	if (Thread.IsValid())
-	{
-		Thread->WaitForCompletion();
-		Thread.Reset();
-	}
+	ReleaseMemory();
 }
 
 TFuture<bool> FSpeechRecognizerThread::StartThread()
