@@ -75,6 +75,10 @@ struct RUNTIMESPEECHRECOGNIZER_API FWhisperSpeechRecognizerState
 	 * Releases the resources associated with the Whisper speech recognizer state
 	 */
 	void Release();
+
+private:
+	/** Release guard (mutex) for thread safety */
+	mutable FCriticalSection ReleaseGuard;
 };
 
 /**

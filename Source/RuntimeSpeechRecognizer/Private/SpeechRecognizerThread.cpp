@@ -143,6 +143,7 @@ bool FWhisperSpeechRecognizerState::Init(uint8* BulkDataPtr, int64 BulkDataSize,
 
 void FWhisperSpeechRecognizerState::Release()
 {
+	FScopeLock Lock(&ReleaseGuard);
 	if (WhisperContext)
 	{
 		whisper_free(WhisperContext);
@@ -729,8 +730,10 @@ uint32 FSpeechRecognizerThread::Run()
 					UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
 					return;
 				}
+				UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Speech recognition progress: %d"), 100);
 				if (ThisShared->LastProgress < 100)
 				{
+					ThisShared->LastProgress = 100;
 					ThisShared->OnRecognitionProgress.Broadcast(100);
 				}
 				ThisShared->OnRecognitionFinished.Broadcast();
