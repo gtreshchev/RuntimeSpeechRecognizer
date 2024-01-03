@@ -17,6 +17,7 @@
 #include "SpeechRecognizerSettingsCustomization.h"
 #include "SpeechRecognizerProgressWindow.h"
 #include "Misc/FileHelper.h"
+#include "Misc/EngineVersionComparison.h"
 
 /** The language model file extension */
 static const FString LanguageModelExtension = TEXT("bin");
@@ -73,7 +74,7 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::SetupLanguageModel() const
 {
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	UProjectPackagingSettings* PackagingSettings = Cast<UProjectPackagingSettings>(UProjectPackagingSettings::StaticClass()->GetDefaultObject());
+	const UProjectPackagingSettings* PackagingSettings = GetDefault<UProjectPackagingSettings>();
 	if (!PackagingSettings)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("PackagingSettingsMissing", "The RuntimeSpeechRecognizer cannot function correctly because the packaging settings are missing"));
@@ -458,10 +459,12 @@ bool FRuntimeSpeechRecognizerEditorModule::UpdatePackagingSettings() const
 
 	const FString LanguageModelPath = SpeechRecognizerSettings->GetLanguageModelPackagePath();
 
-	if (!PackagingSettings->DirectoriesToAlwaysCook.ContainsByPredicate([&LanguageModelPath](const FDirectoryPath& DirPath)
+	const bool bIsAlreadyInPath = PackagingSettings->DirectoriesToAlwaysCook.ContainsByPredicate([&LanguageModelPath](const FDirectoryPath& DirPath)
 	{
 		return FPaths::IsSamePath(DirPath.Path, LanguageModelPath);
-	}))
+	});
+
+	if (!bIsAlreadyInPath)
 	{
 		FDirectoryPath NewDirPath;
 		NewDirPath.Path = LanguageModelPath;
@@ -470,6 +473,12 @@ bool FRuntimeSpeechRecognizerEditorModule::UpdatePackagingSettings() const
 
 	// If bCookMapsOnly is true, the language model will not be staged
 	PackagingSettings->bCookMapsOnly = false;
+
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+	PackagingSettings->UpdateDefaultConfigFile();
+#else
+	PackagingSettings->TryUpdateDefaultConfigFile();
+#endif
 
 	return true;
 }
@@ -484,20 +493,30 @@ bool FRuntimeSpeechRecognizerEditorModule::DeleteOldLanguageModels() const
 		return false;
 	}
 
-	const FString OldAssetPath = TEXT("/Game/RuntimeSpeechRecognizer/LanguageModel");
+	const FString OldAssetPath1 = TEXT("/Game/RuntimeSpeechRecognizer/LanguageModel");
+	const FString OldAssetPath2 = TEXT("/RuntimeSpeechRecognizer/LanguageModel");
 
-	// Delete old language model asset
+	// Delete old language model assets
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	const FString AbsoluteOldAssetPath = FPaths::ConvertRelativePathToFull(FPackageName::LongPackageNameToFilename(*OldAssetPath, TEXT(".uasset")));
-	if (PlatformFile.FileExists(*AbsoluteOldAssetPath))
+
+	const FString AbsoluteOldAssetPath1 = FPaths::ConvertRelativePathToFull(FPackageName::LongPackageNameToFilename(*OldAssetPath1, TEXT(".uasset")));
+	const FString AbsoluteOldAssetPath2 = FPaths::ConvertRelativePathToFull(FPackageName::LongPackageNameToFilename(*OldAssetPath2, TEXT(".uasset")));
+
+	if (PlatformFile.FileExists(*AbsoluteOldAssetPath1))
 	{
-		PlatformFile.DeleteFile(*AbsoluteOldAssetPath);
+		PlatformFile.DeleteFile(*AbsoluteOldAssetPath1);
+	}
+	if (PlatformFile.FileExists(*AbsoluteOldAssetPath2))
+	{
+		PlatformFile.DeleteFile(*AbsoluteOldAssetPath2);
 	}
 
 	// Remove the old package path from the list of directories to always cook
 	{
-		const FString OldPackagePath = TEXT("/Game/RuntimeSpeechRecognizer");
-		UProjectPackagingSettings* PackagingSettings = Cast<UProjectPackagingSettings>(UProjectPackagingSettings::StaticClass()->GetDefaultObject());
+		const FString OldPackagePath1 = TEXT("/Game/RuntimeSpeechRecognizer");
+		const FString OldPackagePath2 = TEXT("/RuntimeSpeechRecognizer");
+
+		UProjectPackagingSettings* PackagingSettings = GetMutableDefault<UProjectPackagingSettings>();
 		if (!PackagingSettings)
 		{
 			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("PackagingSettingsMissing", "The RuntimeSpeechRecognizer cannot function correctly because the packaging settings are missing"));
@@ -505,10 +524,19 @@ bool FRuntimeSpeechRecognizerEditorModule::DeleteOldLanguageModels() const
 			return false;
 		}
 
-		PackagingSettings->DirectoriesToAlwaysCook.RemoveAll([&OldPackagePath](const FDirectoryPath& DirPath)
+		const bool bIsAnyRemoved = PackagingSettings->DirectoriesToAlwaysCook.RemoveAll([&OldPackagePath1, &OldPackagePath2](const FDirectoryPath& DirPath)
 		{
-			return FPaths::IsSamePath(DirPath.Path, OldPackagePath);
-		});
+			return FPaths::IsSamePath(DirPath.Path, OldPackagePath1) || FPaths::IsSamePath(DirPath.Path, OldPackagePath2);
+		}) > 0;
+
+		if (bIsAnyRemoved)
+		{
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+			PackagingSettings->UpdateDefaultConfigFile();
+#else
+			PackagingSettings->TryUpdateDefaultConfigFile();
+#endif
+		}
 	}
 
 	return true;
