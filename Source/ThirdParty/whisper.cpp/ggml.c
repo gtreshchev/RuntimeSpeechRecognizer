@@ -16400,7 +16400,7 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = (n_leafs + n_nodes)*ggml_tensor_overhead() + ggml_graph_overhead_custom(graph_size, false);
 
             ggml_init_params params = {
-                /*.mem_size   =*/ size_eval + overhead,
+                /*.mem_size   =*/ size_t(size_eval + overhead),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
