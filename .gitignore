@@ -4,5 +4,8 @@
 # Binary files
 /Binaries/
 
-# Content folder, because it contains language models that are too large
-/Content/
+# .bin files representing the raw data for the language models as they are too large
+/Content/**/*.bin
+
+# LanguageModels folder containing the uassets representing the language models as they are too large
+/Content/LanguageModels/
