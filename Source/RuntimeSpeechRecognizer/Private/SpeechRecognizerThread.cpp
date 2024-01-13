@@ -531,6 +531,15 @@ void FSpeechRecognizerThread::ProcessPCMData(Audio::FAlignedFloatBuffer PCMData,
 		return;
 	}
 
+	if (SampleRate <= 0.0f || NumOfChannels <= 0)
+	{
+		const FString ShortErrorMessage = TEXT("Audio processing failed");
+		const FString LongErrorMessage = TEXT("Invalid sample rate or number of channels");
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Invalid sample rate (%f) or number of channels (%d). Both must be greater than 0"), SampleRate, NumOfChannels);
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("P.S. Please make sure that the SampleRate pin of the ProcessPCMData function is properly connected, as this is a common mistake"));
+		return;
+	}
+
 	// Make sure to process the data in background thread
 	if (IsInGameThread())
 	{
