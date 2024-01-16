@@ -3,7 +3,6 @@
 #pragma once
 
 #include "HAL/Platform.h"
-#include "Misc/EngineVersionComparison.h"
 
 #ifndef restrict
 #define restrict
@@ -41,17 +40,9 @@
 #if !defined(__AVX__) && (_MSC_VER >= 1700 && defined(__SSE2__))
 #define __AVX__ 1
 #endif
-
-#if !defined(__AVX2__)
-#if UE_VERSION_OLDER_THAN(5, 0, 0)
-#if (_MSC_VER >= 1800 && defined(__SSE2__))
+#if !defined(__AVX2__) && ((_MSC_VER >= 1800 && defined(__SSE2__)) \
+|| (defined(PLATFORM_ALWAYS_HAS_AVX_2) && PLATFORM_ALWAYS_HAS_AVX_2))
 #define __AVX2__ 1
-#endif
-#else
-#if defined(PLATFORM_ALWAYS_HAS_AVX_2) && PLATFORM_ALWAYS_HAS_AVX_2
-#define __AVX2__ 1
-#endif
-#endif
 #endif
 
 #if !defined(__AVX512F__) && defined(PLATFORM_ALWAYS_HAS_AVX_512) && PLATFORM_ALWAYS_HAS_AVX_512
@@ -66,14 +57,12 @@
 
 /* AVX512VL not available until VS 15.5 */
 #if defined(__AVX512F__) && _MSC_VER >= 1912
-// Commented out because was not tested
-//#define __AVX512VL__ 1
+#define __AVX512VL__ 1
 #endif
 
 /* VBMI added in 15.7 */
 #if defined(__AVX512F__) && _MSC_VER >= 1914
-// Commented out because was not tested
-//#define __AVX512VBMI__ 1
+#define __AVX512VBMI__ 1
 #endif
 
 #endif
