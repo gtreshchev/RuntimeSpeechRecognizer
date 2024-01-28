@@ -2,8 +2,11 @@
 
 #include "SpeechRecognizerThread.h"
 
+#include "Misc/EngineVersionComparison.h"
+
 #include "SpeechRecognizerDefines.h"
 #include "SpeechRecognizerTypes.h"
+#include "Containers/StringConv.h"
 
 #include "AudioResampler.h"
 #include "HAL/RunnableThread.h"
@@ -67,7 +70,7 @@ void WhisperNewTextSegmentCallback(whisper_context* WhisperContext, whisper_stat
 }
 
 /**
- * Called every time the whisper encoder begins processing a new audio buffer. Implements the aborting mechanism for the whisper encoder
+ * Called every time before the encoder starts. Implements the aborting mechanism for the whisper encoder
  *
  * @param WhisperContext The whisper context associated with the user data
  * @param WhisperState The whisper state associated with the user data
@@ -84,11 +87,34 @@ bool WhisperEncoderBeginCallback(whisper_context* WhisperContext, whisper_state*
 	TSharedPtr<FSpeechRecognizerThread> SpeechRecognizerSharedPtr = static_cast<FWhisperSpeechRecognizerUserData*>(UserData)->SpeechRecognizerWeakPtr.Pin();
 	if (!SpeechRecognizerSharedPtr.IsValid() || SpeechRecognizerSharedPtr->GetIsStopped() || SpeechRecognizerSharedPtr->GetIsStopping())
 	{
-		UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("Aborting whisper recognition due to stop request"));
+		UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("Aborting whisper recognition due to stop request (encoder begin callback)"));
 		return false;
 	}
 
 	return true;
+}
+
+/**
+ * Called every time before ggml computation starts. Implements the aborting mechanism for the whisper encoder
+ *
+ * @param UserData User-defined data pointer, which should be a pointer to a WhisperSpeechRecognizerUserData struct
+ */
+bool WhisperEncoderAbortCallback(void* UserData)
+{
+	if (!UserData)
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("Aborting whisper recognition due to invalid context or user data"));
+		return true;
+	}
+
+	TSharedPtr<FSpeechRecognizerThread> SpeechRecognizerSharedPtr = static_cast<FWhisperSpeechRecognizerUserData*>(UserData)->SpeechRecognizerWeakPtr.Pin();
+	if (!SpeechRecognizerSharedPtr.IsValid() || SpeechRecognizerSharedPtr->GetIsStopped() || SpeechRecognizerSharedPtr->GetIsStopping())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Warning, TEXT("Aborting whisper recognition due to stop request (encoder abort callback)"));
+		return true;
+	}
+
+	return false;
 }
 
 void WhisperProgressCallback(whisper_context* WhisperContext, whisper_state* WhisperState, int Progress, void* UserData)
@@ -137,6 +163,7 @@ bool FWhisperSpeechRecognizerState::Init(uint8* BulkDataPtr, int64 BulkDataSize,
 		return false;
 	}
 
+	WhisperParameters->initial_prompt = nullptr;
 	WhisperUserData = FWhisperSpeechRecognizerUserData{SpeechRecognizerPtr};
 	return true;
 }
@@ -150,6 +177,8 @@ void FWhisperSpeechRecognizerState::Release()
 		WhisperContext = nullptr;
 	}
 
+	ClearInitialPrompt();
+
 	if (WhisperParameters)
 	{
 		delete WhisperParameters;
@@ -157,6 +186,18 @@ void FWhisperSpeechRecognizerState::Release()
 	}
 
 	WhisperUserData = FWhisperSpeechRecognizerUserData();
+}
+
+void FWhisperSpeechRecognizerState::ClearInitialPrompt()
+{
+	if (WhisperParameters && WhisperParameters->initial_prompt)
+	{
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+		// We should use free to release the memory allocated by strdup
+		free((void*)WhisperParameters->initial_prompt);
+#endif
+		WhisperParameters->initial_prompt = nullptr;
+	}
 }
 
 FSpeechRecognitionParameters FSpeechRecognitionParameters::GetNonStreamingDefaults()
@@ -220,7 +261,21 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 
 	WhisperState.WhisperParameters->beam_search.beam_size = BeamSize;
 
-	WhisperState.WhisperParameters->speed_up = bSpeedUp;
+	WhisperState.ClearInitialPrompt();
+
+	if (InitialPrompt.Len() > 0)
+	{
+		// StringCast to UTF8CHAR is not supported in UE 4.27 and older
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+		// We should use strdup to extend the lifetime of the string since TCHAR_TO_UTF8 returns a temporary pointer
+		// (The memory is freed on FWhisperSpeechRecognizerState::Release)
+		WhisperState.WhisperParameters->initial_prompt = strdup(TCHAR_TO_UTF8(*InitialPrompt));
+#else
+		// StringCast automatically binds the lifetime of the string to the lifetime of the InitialPrompt variable
+		const auto InitialPrompt_UTF8 = StringCast<UTF8CHAR>(*InitialPrompt);
+		WhisperState.WhisperParameters->initial_prompt = (const char*)InitialPrompt_UTF8.Get();
+#endif
+	}
 
 	// Setting up the new segment callback, which is called on every new recognized text segment
 	{
@@ -228,12 +283,19 @@ void FSpeechRecognitionParameters::FillWhisperStateParameters(FWhisperSpeechReco
 		WhisperState.WhisperParameters->new_segment_callback_user_data = &WhisperState.WhisperUserData;
 	}
 
-	// Setting up the abort mechanism callback, which is called before every encoder run
+	// Setting up the abort mechanism callback, which is called every time before the encoder starts
 	{
 		WhisperState.WhisperParameters->encoder_begin_callback = WhisperEncoderBeginCallback;
 		WhisperState.WhisperParameters->encoder_begin_callback_user_data = &WhisperState.WhisperUserData;
 	}
 
+	// Setting up the abort mechanism callback, which is called every time before ggml computation starts
+	{
+		WhisperState.WhisperParameters->abort_callback = WhisperEncoderAbortCallback;
+		WhisperState.WhisperParameters->abort_callback_user_data = &WhisperState.WhisperUserData;
+	}
+
+	// Setting up the progress callback, which is called every time the progress changes
 	{
 		WhisperState.WhisperParameters->progress_callback = WhisperProgressCallback;
 		WhisperState.WhisperParameters->progress_callback_user_data = &WhisperState.WhisperUserData;
@@ -723,9 +785,11 @@ uint32 FSpeechRecognizerThread::Run()
 			if (whisper_full_parallel(WhisperState.WhisperContext, *WhisperState.WhisperParameters, NewQueuedBuffer.GetData(), NewQueuedBuffer.Num(), 1) != 0)
 			{
 				UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to process audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
-				return 1;
 			}
-			UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Processed audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
+			else
+			{
+				UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Processed audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
+			}
 		}
 
 		if (DoesSharedInstanceExist() && PendingAudio.GetTotalMixedAndResampledSize() == 0 && !GetIsFinished())
@@ -739,9 +803,9 @@ uint32 FSpeechRecognizerThread::Run()
 					UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
 					return;
 				}
-				UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Speech recognition progress: %d"), 100);
 				if (ThisShared->LastProgress < 100)
 				{
+					UE_LOG(LogRuntimeSpeechRecognizer, Log, TEXT("Speech recognition progress: %d"), 100);
 					ThisShared->LastProgress = 100;
 					ThisShared->OnRecognitionProgress.Broadcast(100);
 				}
@@ -1111,6 +1175,24 @@ bool FSpeechRecognizerThread::SetBeamSize(int32 Value)
 	return true;
 }
 
+bool FSpeechRecognizerThread::SetInitialPrompt(const FString& Value)
+{
+	if (!GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set beam size while the thread is running"));
+		return false;
+	}
+
+	if (GetIsStopped())
+	{
+		UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Unable to set beam size while the thread is stopping"));
+		return false;
+	}
+
+	RecognitionParameters.InitialPrompt = Value;
+	return true;
+}
+
 bool FSpeechRecognizerThread::GetIsStopped() const
 {
 	return bIsStopped;
@@ -1126,7 +1208,7 @@ bool FSpeechRecognizerThread::GetIsFinished() const
 	return bIsFinished;
 }
 
-void FSpeechRecognizerThread::LoadLanguageModel(TFunction<void(bool, uint8*, int64)>&& OnLoadLanguageModel)
+void FSpeechRecognizerThread::LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadLanguageModel)
 {
 	const USpeechRecognizerSettings* SpeechRecognizerSettings = GetDefault<USpeechRecognizerSettings>();
 	if (!SpeechRecognizerSettings)

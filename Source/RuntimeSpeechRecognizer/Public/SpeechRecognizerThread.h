@@ -76,6 +76,11 @@ struct RUNTIMESPEECHRECOGNIZER_API FWhisperSpeechRecognizerState
 	 */
 	void Release();
 
+	/**
+	 * Clears the initial prompt for the first window
+	 */
+	void ClearInitialPrompt();
+
 private:
 	/** Release guard (mutex) for thread safety */
 	mutable FCriticalSection ReleaseGuard;
@@ -147,6 +152,13 @@ struct RUNTIMESPEECHRECOGNIZER_API FSpeechRecognitionParameters
 	/** Number of beams in beam search, only applicable when temperature is zero */
 	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
 	int32 BeamSize = -1.f;
+
+	/**
+	 * Optional text to provide as a prompt for the first window
+	 * This can be used to provide context for the recognition to make it more likely to predict the words correctly
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Runtime Speech Recognizer")
+	FString InitialPrompt;
 
 	/**
 	 * Returns the default parameters suitable for non-streaming speech recognition
@@ -433,23 +445,37 @@ public:
 	bool SetSuppressNonSpeechTokens(bool Value);
 
 	/**
-	 * Set the number of beams in beam search. Only applicable when temperature is zero
+	 * Sets the number of beams in beam search. Only applicable when temperature is zero
 	 * 
 	 * @param Value The number of beams in beam search
 	 * @return True if the setting was set successfully, false otherwise
 	 */
 	bool SetBeamSize(int32 Value);
 
+	/**
+	 * Sets the initial prompt for the first window
+	 * This can be used to provide context for the recognition to make it more likely to predict the words correctly
+	 * 
+	 * @param Value The initial prompt for the first window
+	 * @return True if the setting was set successfully, false otherwise
+	 */
+	bool SetInitialPrompt(const FString& Value);
+
 private:
 	/**
-	 * Asynchronously load the language model data and pass it to the provided callback
-	 *
-	 * @param OnLoadLanguageModel The callback function to pass the loaded language model data to
+	 * Callback type for loading the language model data
 	 * The first argument indicates whether the load succeeded or not
 	 * The second argument is a pointer to the language model bulk data
 	 * The third argument is the size of the language model bulk data in memory
 	 */
-	void LoadLanguageModel(TFunction<void(bool, uint8*, int64)>&& OnLoadLanguageModel);
+	using FOnLanguageModelLoaded = TFunction<void(bool, uint8*, int64)>;
+
+	/**
+	 * Asynchronously load the language model data and pass it to the provided callback
+	 *
+	 * @param OnLoadLanguageModel The callback function to pass the loaded language model data to
+	 */
+	void LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadLanguageModel);
 
 	/**
 	 * Releases the memory used by the language model. Intended to be called when the thread is stopped
