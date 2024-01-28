@@ -201,3 +201,8 @@ bool USpeechRecognizer::SetBeamSize(int32 Value)
 {
 	return Thread->SetBeamSize(Value);
 }
+
+bool USpeechRecognizer::SetInitialPrompt(const FString& Value)
+{
+	return Thread->SetInitialPrompt(Value);
+}

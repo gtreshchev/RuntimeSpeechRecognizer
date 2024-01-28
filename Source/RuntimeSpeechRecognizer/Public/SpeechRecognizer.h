@@ -367,13 +367,23 @@ public:
 	bool SetSuppressNonSpeechTokens(bool Value);
 
 	/**
-	 * Set the number of beams in beam search. Only applicable when temperature is zero
+	 * Sets the number of beams in beam search. Only applicable when temperature is zero
 	 * 
 	 * @param Value The number of beams in beam search
 	 * @return True if the setting was set successfully, false otherwise
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|Individual")
 	bool SetBeamSize(int32 Value);
+
+	/**
+	 * Sets the initial prompt for the first window
+	 * This can be used to provide context for the recognition to make it more likely to predict the words correctly
+	 * 
+	 * @param Value The initial prompt for the first window
+	 * @return True if the setting was set successfully, false otherwise
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Setters|Individual")
+	bool SetInitialPrompt(const FString& Value);
 
 private:
 	/** The thread that handles speech recognition */
