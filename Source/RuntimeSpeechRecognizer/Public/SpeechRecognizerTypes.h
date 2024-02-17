@@ -28,6 +28,7 @@ enum class ESpeechRecognizerModelSize : uint8
 {
 	Tiny,
 	Tiny_Q5_1 UMETA(DisplayName = "Tiny Quantized (Q5_1)", ToolTip = "Tiny model with quantization to 5 bits and 1 decimal point"),
+	Tiny_Q8_0 UMETA(DisplayName = "Tiny Quantized (Q8_0)", ToolTip = "Tiny model with quantization to 8 bits and 0 decimal points"),
 	Base,
 	Base_Q5_1 UMETA(DisplayName = "Base Quantized (Q5_1)", ToolTip = "Base model with quantization to 5 bits and 1 decimal point"),
 	Small,
@@ -51,6 +52,19 @@ RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpe
 	if (ModelSize == ESpeechRecognizerModelSize::Large_V1 ||
 		ModelSize == ESpeechRecognizerModelSize::Large_V2 || ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0 ||
 		ModelSize == ESpeechRecognizerModelSize::Large_V3 || ModelSize == ESpeechRecognizerModelSize::Large_V3_Q5_0)
+	{
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Check if the language model size supports multilingual model language
+ */
+RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportMultilingualModelLanguage(ESpeechRecognizerModelSize ModelSize)
+{
+	// Multilingual model language is not supported for Tiny_Q8_0 models
+	if (ModelSize == ESpeechRecognizerModelSize::Tiny_Q8_0)
 	{
 		return false;
 	}

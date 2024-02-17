@@ -326,6 +326,7 @@ FString FRuntimeSpeechRecognizerEditorModule::GetLMFileName(ESpeechRecognizerMod
 		{
 		case ESpeechRecognizerModelSize::Tiny: return TEXT("{Prefix}tiny{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Tiny_Q5_1:	return TEXT("{Prefix}tiny{LanguageCode}-q5_1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Tiny_Q8_0: return TEXT("{Prefix}tiny{LanguageCode}-q8_0{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Base: return TEXT("{Prefix}base{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Base_Q5_1: return TEXT("{Prefix}base{LanguageCode}-q5_1{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Small: return TEXT("{Prefix}small{LanguageCode}{LanguageModelExtension}");
