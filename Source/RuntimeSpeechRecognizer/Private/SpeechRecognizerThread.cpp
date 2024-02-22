@@ -1260,7 +1260,6 @@ void FSpeechRecognizerThread::LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadL
 				}
 
 				USpeechRecognizerModel* SpeechRecognizerModel = LazySpeechRecognizerModel.Get();
-				SpeechRecognizerModel->SetInternalFlags(EInternalObjectFlags::Async);
 
 				uint8* ModelBulkDataPtr = nullptr;
 				SpeechRecognizerModel->LanguageModelBulkData.GetCopy(reinterpret_cast<void**>(&ModelBulkDataPtr), true);
@@ -1282,11 +1281,6 @@ void FSpeechRecognizerThread::LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadL
 						UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to get shared instance"));
 						FMemory::Free(ModelBulkDataPtr);
 						return;
-					}
-
-					if (SpeechRecognizerModel->IsValidLowLevel())
-					{
-						SpeechRecognizerModel->ClearInternalFlags(EInternalObjectFlags::Async);
 					}
 					OnLoadLanguageModel(true, ModelBulkDataPtr, ModelBulkDataSize);
 				});
