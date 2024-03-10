@@ -12,6 +12,10 @@
 #include "ggml-cuda.h"
 #endif
 
+#ifdef GGML_USE_SYCL
+#include "ggml-sycl.h"
+#endif
+
 #ifdef WHISPER_USE_OPENVINO
 #include "openvino/whisper-openvino-encoder.h"
 #endif
@@ -183,7 +187,7 @@ static bool ggml_graph_compute_helper(
         ggml_backend_metal_set_n_cb(backend, n_threads);
     }
 #endif
-    return ggml_backend_graph_compute(backend, graph);
+    return ggml_backend_graph_compute(backend, graph) == GGML_STATUS_SUCCESS;
 }
 
 // faster matrix multiplications for tensors that do not have dimension 0 divisible by "pad"
@@ -1052,6 +1056,16 @@ static ggml_backend_t whisper_backend_init(const whisper_context_params & params
     }
 #endif
 
+#ifdef GGML_USE_SYCL
+    if (params.use_gpu) {
+        WHISPER_LOG_INFO("%s: using SYCL backend\n", __func__);
+        backend_gpu = ggml_backend_sycl_init(params.gpu_device);
+        if (!backend_gpu) {
+            WHISPER_LOG_ERROR("%s: ggml_backend_sycl_init() failed\n", __func__);
+        }
+    }
+#endif
+
     if (backend_gpu) {
         return backend_gpu;
     }
@@ -1616,8 +1630,7 @@ static bool whisper_encode_external(const whisper_state & wstate) {
 
 static struct ggml_cgraph * whisper_build_graph_conv(
         whisper_context & wctx,
-          whisper_state & wstate,
-              const int   mel_offset) {
+          whisper_state & wstate) {
     const auto & model   = wctx.model;
     const auto & hparams = model.hparams;
 
@@ -2001,7 +2014,7 @@ static bool whisper_encode_internal(
     {
         auto & alloc = wstate.alloc_conv.alloc;
 
-        ggml_cgraph * gf = whisper_build_graph_conv(wctx, wstate, mel_offset);
+        ggml_cgraph * gf = whisper_build_graph_conv(wctx, wstate);
 
         if (!ggml_gallocr_alloc_graph(alloc, gf)) {
             // should never happen as we pre-allocate the memory
@@ -3024,7 +3037,7 @@ struct whisper_state * whisper_init_state(whisper_context * ctx) {
     {
         bool ok = whisper_allocr_graph_init(state->alloc_conv, ctx->backend,
                 [&]() {
-                    return whisper_build_graph_conv(*ctx, *state, 0);
+                    return whisper_build_graph_conv(*ctx, *state);
                 });
 
         if (!ok) {
@@ -3839,7 +3852,7 @@ const char * whisper_print_system_info(void) {
     s += "VSX = "       + std::to_string(ggml_cpu_has_vsx())       + " | ";
     s += "CUDA = "      + std::to_string(ggml_cpu_has_cublas())    + " | ";
     s += "COREML = "    + std::to_string(whisper_has_coreml())     + " | ";
-    s += "OPENVINO = "  + std::to_string(whisper_has_openvino())   + " | ";
+    s += "OPENVINO = "  + std::to_string(whisper_has_openvino())          ;
 
     return s.c_str();
 }
@@ -5344,7 +5357,10 @@ int whisper_full_with_state(
                             beam_candidates.begin(),
                             beam_candidates.end(),
                             [](const beam_candidate & a, const beam_candidate & b) {
-                        return a.sequence.sum_logprobs_all > b.sequence.sum_logprobs_all;
+                        if (a.sequence.sum_logprobs_all != b.sequence.sum_logprobs_all) {
+                            return a.sequence.sum_logprobs_all > b.sequence.sum_logprobs_all;
+                        }
+                        return a.decoder_idx < b.decoder_idx;
                     });
 
                     uint32_t cur_c = 0;
