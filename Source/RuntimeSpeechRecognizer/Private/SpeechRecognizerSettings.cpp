@@ -3,6 +3,7 @@
 #include "SpeechRecognizerSettings.h"
 #include "SpeechRecognizerDefines.h"
 #include "Misc/Paths.h"
+#include "SpeechRecognizerTypes.h"
 
 #if WITH_EDITOR
 #include "RuntimeSpeechRecognizerEditor/Public/RuntimeSpeechRecognizerEditor.h"
@@ -59,11 +60,21 @@ void USpeechRecognizerSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 		if (!DoesSupportEnglishOnlyModelLanguage(ModelSize) || ModelSize == ESpeechRecognizerModelSize::Custom)
 		{
 			ModelLanguage = ESpeechRecognizerModelLanguage::Multilingual;
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+			UpdateDefaultConfigFile();
+#else
+			TryUpdateDefaultConfigFile();
+#endif
 			SaveConfig();
 		}
 		else if (!DoesSupportMultilingualModelLanguage(ModelSize))
 		{
 			ModelLanguage = ESpeechRecognizerModelLanguage::EnglishOnly;
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+			UpdateDefaultConfigFile();
+#else
+			TryUpdateDefaultConfigFile();
+#endif
 			SaveConfig();
 		}
 	}
