@@ -392,7 +392,7 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeec
 
 	const FString URL = FPaths::Combine(SpeechRecognizerSettings->ModelDownloadBaseUrl, LMFileName);
 
-	LanguageModelDownloadState.Downloader = MakeShared<FLanguageModelDownloader>();
+	LanguageModelDownloadState.Downloader = MakeShared<FRuntimeChunkDownloader_Recognizer>();
 	LanguageModelDownloadState.Promise = MakeUnique<TPromise<bool>>();
 	LanguageModelDownloadState.ProgressValue = MakeUnique<float>(0.0f);
 	LanguageModelDownloadState.ProgressWindow = MakeUnique<FSpeechRecognizerProgressDialog>(LOCTEXT("DownloadLM", "Downloading Language Model"), FText::Format(LOCTEXT("DownloadLMDescription", "Downloading Language Model: {0}"), FText::FromString(LMFileName)),
@@ -404,14 +404,15 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeec
 			LanguageModelDownloadState.Downloader->CancelDownload();
 		}));
 
-	LanguageModelDownloadState.Downloader->DownloadFile(URL, 15, FString(), TNumericLimits<TArray<uint8>::SizeType>::Max(), [this](int64 BytesReceived, int64 ContentSize)
+	// In UE >= 5.4, the timeout behavior has changed to continue counting even after connection establishment, which is why the timeout value is set to 3600 seconds (1 hour) for safety
+	LanguageModelDownloadState.Downloader->DownloadFile(URL, 3600, FString(), TNumericLimits<TArray<uint8>::SizeType>::Max(), [this](int64 BytesReceived, int64 ContentSize)
 	{
-		const float ProgressRatio = static_cast<float>(BytesReceived) / ContentSize;
+		const float ProgressRatio = ContentSize <= 0 ? 0 : static_cast<float>(BytesReceived) / ContentSize;
 		*LanguageModelDownloadState.ProgressValue = ProgressRatio;
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloading language model file: %f"), ProgressRatio);
-	}).Next([this, EditorLMFilePathFull](TArray64<uint8>&& DownloadedData) mutable
+	}).Next([this, EditorLMFilePathFull](FRuntimeChunkDownloaderResult_Recognizer&& DownloadedData) mutable
 	{
-		if (DownloadedData.Num() <= 0)
+		if (DownloadedData.Data.Num() <= 0 || DownloadedData.Result != EDownloadToMemoryResult_Recognizer::Success)
 		{
 			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LanguageModelDownloadFailed", "The RuntimeSpeechRecognizer cannot function correctly because the language model file could not be downloaded. The file should be located at: {0}"), FText::FromString(EditorLMFilePathFull)));
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Cannot download language model file: %s"), *EditorLMFilePathFull);
@@ -419,7 +420,7 @@ TFuture<bool> FRuntimeSpeechRecognizerEditorModule::DownloadLanguageModel(ESpeec
 			return;
 		}
 
-		if (!FFileHelper::SaveArrayToFile(DownloadedData, *EditorLMFilePathFull))
+		if (!FFileHelper::SaveArrayToFile(DownloadedData.Data, *EditorLMFilePathFull))
 		{
 			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LanguageModelSaveFailed", "The RuntimeSpeechRecognizer cannot function correctly because the language model file could not be saved. The file should be located at: {0}"), FText::FromString(EditorLMFilePathFull)));
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Cannot save language model file: %s"), *EditorLMFilePathFull);

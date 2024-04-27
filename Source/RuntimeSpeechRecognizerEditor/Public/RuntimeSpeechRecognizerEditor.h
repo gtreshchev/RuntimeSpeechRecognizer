@@ -104,7 +104,7 @@ private:
 	struct
 	{
 		/** Pointer to the language model downloader */
-		mutable TSharedPtr<class FLanguageModelDownloader> Downloader;
+		mutable TSharedPtr<class FRuntimeChunkDownloader_Recognizer> Downloader;
 
 		/** Pointer to a promise that will resolve when the language model finishes downloading */
 		mutable TUniquePtr<TPromise<bool>> Promise;

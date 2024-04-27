@@ -7,49 +7,83 @@
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 
-FLanguageModelDownloader::FLanguageModelDownloader()
+FRuntimeChunkDownloader_Recognizer::FRuntimeChunkDownloader_Recognizer()
 	: bCanceled(false)
+{}
+
+FRuntimeChunkDownloader_Recognizer::~FRuntimeChunkDownloader_Recognizer()
 {
+	UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("FRuntimeChunkDownloader_Recognizer destroyed"));
 }
 
-TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFile(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, const TFunction<void(int64, int64)>& OnProgress)
+TFuture<FRuntimeChunkDownloaderResult_Recognizer> FRuntimeChunkDownloader_Recognizer::DownloadFile(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, const FOnProgress& OnProgress)
 {
 	if (bCanceled)
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file download from %s"), *URL);
-		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()}).GetFuture();
 	}
 
-	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	TWeakPtr<FLanguageModelDownloader> WeakThisPtr = AsShared();
+	TSharedPtr<TPromise<FRuntimeChunkDownloaderResult_Recognizer>> PromisePtr = MakeShared<TPromise<FRuntimeChunkDownloaderResult_Recognizer>>();
+	TWeakPtr<FRuntimeChunkDownloader_Recognizer> WeakThisPtr = AsShared();
 	GetContentSize(URL, Timeout).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, MaxChunkSize, OnProgress](int64 ContentSize) mutable
 	{
-		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 		if (!SharedThis.IsValid())
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
 			return;
 		}
 
+		if (SharedThis->bCanceled)
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file download from %s"), *URL);
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()});
+			return;
+		}
+
+		auto DownloadByPayload = [SharedThis, WeakThisPtr, PromisePtr, URL, Timeout, ContentType, OnProgress]()
+		{
+			SharedThis->DownloadFileByPayload(URL, Timeout, ContentType, OnProgress).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, OnProgress](FRuntimeChunkDownloaderResult_Recognizer Result) mutable
+			{
+				TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
+				if (!SharedThis.IsValid())
+					{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
+					PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+					return;
+				}
+
+				if (SharedThis->bCanceled)
+				{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
+					PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()});
+					return;
+				}
+
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{Result.Result, MoveTemp(Result.Data)});
+			});
+		};
+		
 		if (ContentSize <= 0)
 		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file from %s: ContentSize is <= 0"), *URL);
-			PromisePtr->SetValue(TArray64<uint8>());
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Unable to get content size for %s. Trying to download the file by payload"), *URL);
+			DownloadByPayload();
 			return;
 		}
 
 		if (MaxChunkSize <= 0)
 		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file from %s: MaxChunkSize is <= 0"), *URL);
-			PromisePtr->SetValue(TArray64<uint8>());
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: MaxChunkSize is <= 0. Trying to download the file by payload"), *URL);
+			DownloadByPayload();
 			return;
 		}
 
-		TArray64<uint8> OverallDownloadedData;
+		TSharedPtr<TArray64<uint8>> OverallDownloadedDataPtr = MakeShared<TArray64<uint8>>();
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Pre-allocating %lld bytes for file download from %s"), ContentSize, *URL);
-			OverallDownloadedData.SetNumUninitialized(ContentSize);
+			OverallDownloadedDataPtr->SetNumUninitialized(ContentSize);
 		}
 
 		FInt64Vector2 ChunkRange;
@@ -59,27 +93,40 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFile(const FString& U
 		}
 
 		TSharedPtr<int64> ChunkOffsetPtr = MakeShared<int64>(ChunkRange.X);
-		TSharedPtr<bool> bChunkDownloadedPtr = MakeShared<bool>(false);
+		TSharedPtr<bool> bChunkDownloadedFilledPtr = MakeShared<bool>(false);
 
-		auto OnChunkDownloaded = [WeakThisPtr, PromisePtr, URL, ContentSize, OverallDownloadedData = MoveTemp(OverallDownloadedData), bChunkDownloadedPtr, ChunkOffsetPtr](TArray64<uint8>&& ResultData) mutable
+		auto OnChunkDownloadedFilled = [bChunkDownloadedFilledPtr]()
 		{
-			if (bChunkDownloadedPtr.IsValid())
+			if (bChunkDownloadedFilledPtr.IsValid())
 			{
-				*bChunkDownloadedPtr = true;
+				*bChunkDownloadedFilledPtr = true;
 			}
+		};
 
-			TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		auto OnChunkDownloaded = [WeakThisPtr, PromisePtr, URL, ContentSize, Timeout, ContentType, OnProgress, DownloadByPayload, OverallDownloadedDataPtr, bChunkDownloadedFilledPtr, ChunkOffsetPtr, OnChunkDownloadedFilled](TArray64<uint8>&& ResultData) mutable
+		{
+			TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 			if (!SharedThis.IsValid())
 			{
 				UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
-				PromisePtr->SetValue(TArray64<uint8>());
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+				OnChunkDownloadedFilled();
+				return;
+			}
+
+			if (ResultData.Num() <= 0)
+			{
+				UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: result data is empty"), *URL);
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+				OnChunkDownloadedFilled();
 				return;
 			}
 
 			if (SharedThis->bCanceled)
 			{
 				UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
-				PromisePtr->SetValue(TArray64<uint8>());
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()});
+				OnChunkDownloadedFilled();
 				return;
 			}
 
@@ -88,28 +135,31 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFile(const FString& U
 
 			// Check if some values are out of range
 			{
-				if (*ChunkOffsetPtr < 0 || *ChunkOffsetPtr >= OverallDownloadedData.Num())
+				if (*ChunkOffsetPtr < 0 || *ChunkOffsetPtr >= OverallDownloadedDataPtr->Num())
 				{
-					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: data offset is out of range (%lld, expected [0, %lld])"), *URL, *ChunkOffsetPtr, OverallDownloadedData.Num());
-					PromisePtr->SetValue(TArray64<uint8>());
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: data offset is out of range (%lld, expected [0, %lld]). Trying to download the file by payload"), *URL, *ChunkOffsetPtr, OverallDownloadedDataPtr->Num());
+					DownloadByPayload();
+					OnChunkDownloadedFilled();
 					return;
 				}
 
-				if (CurrentlyDownloadedSize > OverallDownloadedData.Num())
+				if (CurrentlyDownloadedSize > OverallDownloadedDataPtr->Num())
 				{
-					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: overall downloaded size is out of range (%lld, expected [0, %lld])"), *URL, CurrentlyDownloadedSize, OverallDownloadedData.Num());
-					PromisePtr->SetValue(TArray64<uint8>());
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: overall downloaded size is out of range (%lld, expected [0, %lld]). Trying to download the file by payload"), *URL, CurrentlyDownloadedSize, OverallDownloadedDataPtr->Num());
+					DownloadByPayload();
+					OnChunkDownloadedFilled();
 					return;
 				}
 			}
 
 			// Append the downloaded chunk to the result data
-			FMemory::Memcpy(OverallDownloadedData.GetData() + *ChunkOffsetPtr, ResultData.GetData(), ResultData.Num());
+			FMemory::Memcpy(OverallDownloadedDataPtr->GetData() + *ChunkOffsetPtr, ResultData.GetData(), ResultData.Num());
 
 			// If the download is complete, return the result data
 			if (*ChunkOffsetPtr + ResultData.Num() >= ContentSize)
 			{
-				PromisePtr->SetValue(MoveTemp(OverallDownloadedData));
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Success, MoveTemp(*OverallDownloadedDataPtr.Get())});
+				OnChunkDownloadedFilled();
 				return;
 			}
 
@@ -117,61 +167,97 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFile(const FString& U
 			*ChunkOffsetPtr += ResultData.Num();
 		};
 
-		SharedThis->DownloadFilePerChunk(URL, Timeout, ContentType, MaxChunkSize, ChunkRange, OnProgress, OnChunkDownloaded).Next([PromisePtr, bChunkDownloadedPtr, URL](bool bSucceeded)
+		SharedThis->DownloadFilePerChunk(URL, Timeout, ContentType, MaxChunkSize, ChunkRange, OnProgress, OnChunkDownloaded).Next([PromisePtr, bChunkDownloadedFilledPtr, URL, OverallDownloadedDataPtr, OnChunkDownloadedFilled, DownloadByPayload](EDownloadToMemoryResult_Recognizer Result) mutable
 		{
-			if (!bSucceeded)
+			// Only return data if no chunk was downloaded
+			if (bChunkDownloadedFilledPtr.IsValid() && (*bChunkDownloadedFilledPtr.Get() == false))
 			{
-				UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file by chunk from %s"), *URL);
-
-				// Only return an empty data if no chunk was downloaded
-				if (bChunkDownloadedPtr.IsValid() && (*bChunkDownloadedPtr.Get() == false))
+				if (Result != EDownloadToMemoryResult_Recognizer::Success && Result != EDownloadToMemoryResult_Recognizer::SucceededByPayload)
 				{
-					PromisePtr->SetValue(TArray64<uint8>());
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: download failed. Trying to download the file by payload"), *URL);
+					DownloadByPayload();
+					OnChunkDownloadedFilled();
+					return;
 				}
+				OverallDownloadedDataPtr->Shrink();
+				PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{Result, MoveTemp(*OverallDownloadedDataPtr.Get())});
 			}
 		});
 	});
 	return PromisePtr->GetFuture();
 }
 
-TFuture<bool> FLanguageModelDownloader::DownloadFilePerChunk(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, FInt64Vector2 ChunkRange, const TFunction<void(int64, int64)>& OnProgress, const TFunction<void(TArray64<uint8>&&)>& OnChunkDownloaded)
+TFuture<EDownloadToMemoryResult_Recognizer> FRuntimeChunkDownloader_Recognizer::DownloadFilePerChunk(const FString& URL, float Timeout, const FString& ContentType, int64 MaxChunkSize, FInt64Vector2 ChunkRange, const FOnProgress& OnProgress, const FOnChunkDownloaded& OnChunkDownloaded)
 {
 	if (bCanceled)
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
-		return MakeFulfilledPromise<bool>(false).GetFuture();
+		return MakeFulfilledPromise<EDownloadToMemoryResult_Recognizer>(EDownloadToMemoryResult_Recognizer::Cancelled).GetFuture();
 	}
 
-	TSharedPtr<TPromise<bool>> PromisePtr = MakeShared<TPromise<bool>>();
-	TWeakPtr<FLanguageModelDownloader> WeakThisPtr = AsShared();
+	TSharedPtr<TPromise<EDownloadToMemoryResult_Recognizer>> PromisePtr = MakeShared<TPromise<EDownloadToMemoryResult_Recognizer>>();
+	TWeakPtr<FRuntimeChunkDownloader_Recognizer> WeakThisPtr = AsShared();
 	GetContentSize(URL, Timeout).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, MaxChunkSize, OnProgress, OnChunkDownloaded, ChunkRange](int64 ContentSize) mutable
 	{
-		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 		if (!SharedThis.IsValid())
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
-			PromisePtr->SetValue(false);
+			PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
 			return;
 		}
 		
 		if (SharedThis->bCanceled)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
-			PromisePtr->SetValue(false);
+			PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::Cancelled);
 			return;
 		}
 
 		if (ContentSize <= 0)
 		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: content size is <= 0"), *URL);
-			PromisePtr->SetValue(false);
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Unable to get content size for %s. Trying to download the file by payload"), *URL);
+			SharedThis->DownloadFileByPayload(URL, Timeout, ContentType, OnProgress).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, OnChunkDownloaded, OnProgress](FRuntimeChunkDownloaderResult_Recognizer Result) mutable
+			{
+				TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
+				if (!SharedThis.IsValid())
+				{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
+					PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
+					return;
+				}
+
+				if (SharedThis->bCanceled)
+				{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
+					PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::Cancelled);
+					return;
+				}
+
+				if (Result.Result != EDownloadToMemoryResult_Recognizer::Success && Result.Result != EDownloadToMemoryResult_Recognizer::SucceededByPayload)
+				{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: %s"), *URL, *UEnum::GetValueAsString(Result.Result));
+					PromisePtr->SetValue(Result.Result);
+					return;
+				}
+
+				if (Result.Data.Num() <= 0)
+				{
+					UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: downloaded content is empty"), *URL);
+					PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
+					return;
+				}
+
+				PromisePtr->SetValue(Result.Result);
+				OnChunkDownloaded(MoveTemp(Result.Data));
+			});
 			return;
 		}
 
 		if (MaxChunkSize <= 0)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: max chunk size is <= 0"), *URL);
-			PromisePtr->SetValue(false);
+			PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
 			return;
 		}
 
@@ -184,39 +270,46 @@ TFuture<bool> FLanguageModelDownloader::DownloadFilePerChunk(const FString& URL,
 		if (ChunkRange.Y > ContentSize)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: chunk range is out of range (%lld, expected [0, %lld])"), *URL, ChunkRange.Y, ContentSize);
-			PromisePtr->SetValue(false);
+			PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
 			return;
 		}
 
 		auto OnProgressInternal = [WeakThisPtr, PromisePtr, URL, Timeout, ContentType, MaxChunkSize, OnChunkDownloaded, OnProgress, ChunkRange](int64 BytesReceived, int64 ContentSize) mutable
 		{
-			TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+			TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 			if (SharedThis.IsValid())
 			{
-				const float Progress = static_cast<float>(BytesReceived + ChunkRange.X) / ContentSize;
-				UE_LOG(LogEditorRuntimeSpeechRecognizer, Verbose, TEXT("Downloaded %lld bytes of file chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), BytesReceived, *URL, ChunkRange.X, ChunkRange.Y, ContentSize, Progress);
+				const float Progress = ContentSize <= 0 ? 0.0f : static_cast<float>(BytesReceived + ChunkRange.X) / ContentSize;
+				UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloaded %lld bytes of file chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), BytesReceived, *URL, ChunkRange.X, ChunkRange.Y, ContentSize, Progress);
 				OnProgress(BytesReceived + ChunkRange.X, ContentSize);
 			}
 		};
 
-		SharedThis->DownloadFileByChunk(URL, Timeout, ContentType, ContentSize, ChunkRange, OnProgressInternal).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, ContentSize, MaxChunkSize, OnChunkDownloaded, OnProgress, ChunkRange](TArray64<uint8>&& ResultData)
+		SharedThis->DownloadFileByChunk(URL, Timeout, ContentType, ContentSize, ChunkRange, OnProgressInternal).Next([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, ContentSize, MaxChunkSize, OnChunkDownloaded, OnProgress, ChunkRange](FRuntimeChunkDownloaderResult_Recognizer&& Result)
 		{
-			TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+			TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 			if (!SharedThis.IsValid())
 			{
 				UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
-				PromisePtr->SetValue(false);
+				PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::DownloadFailed);
 				return;
 			}
 
 			if (SharedThis->bCanceled)
 			{
 				UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
-				PromisePtr->SetValue(false);
+				PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::Cancelled);
 				return;
 			}
 
-			OnChunkDownloaded(MoveTemp(ResultData));
+			if (Result.Result != EDownloadToMemoryResult_Recognizer::Success && Result.Result != EDownloadToMemoryResult_Recognizer::SucceededByPayload)
+			{
+				UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: %s"), *URL, *UEnum::GetValueAsString(Result.Result));
+				PromisePtr->SetValue(Result.Result);
+				return;
+			}
+
+			OnChunkDownloaded(MoveTemp(Result.Data));
 
 			// Check if the download is complete
 			if (ContentSize > ChunkRange.Y + 1)
@@ -224,14 +317,14 @@ TFuture<bool> FLanguageModelDownloader::DownloadFilePerChunk(const FString& URL,
 				const int64 ChunkStart = ChunkRange.Y + 1;
 				const int64 ChunkEnd = FMath::Min(ChunkStart + MaxChunkSize, ContentSize) - 1;
 
-				SharedThis->DownloadFilePerChunk(URL, Timeout, ContentType, MaxChunkSize, FInt64Vector2(ChunkStart, ChunkEnd), OnProgress, OnChunkDownloaded).Next([WeakThisPtr, PromisePtr](bool bSuccess)
+				SharedThis->DownloadFilePerChunk(URL, Timeout, ContentType, MaxChunkSize, FInt64Vector2(ChunkStart, ChunkEnd), OnProgress, OnChunkDownloaded).Next([WeakThisPtr, PromisePtr](EDownloadToMemoryResult_Recognizer Result)
 				{
-					PromisePtr->SetValue(bSuccess);
+					PromisePtr->SetValue(Result);
 				});
 			}
 			else
 			{
-				PromisePtr->SetValue(true);
+				PromisePtr->SetValue(EDownloadToMemoryResult_Recognizer::Success);
 			}
 		});
 	});
@@ -239,27 +332,27 @@ TFuture<bool> FLanguageModelDownloader::DownloadFilePerChunk(const FString& URL,
 	return PromisePtr->GetFuture();
 }
 
-TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFileByChunk(const FString& URL, float Timeout, const FString& ContentType, int64 ContentSize, FInt64Vector2 ChunkRange, const TFunction<void(int64, int64)>& OnProgress)
+TFuture<FRuntimeChunkDownloaderResult_Recognizer> FRuntimeChunkDownloader_Recognizer::DownloadFileByChunk(const FString& URL, float Timeout, const FString& ContentType, int64 ContentSize, FInt64Vector2 ChunkRange, const FOnProgress& OnProgress)
 {
 	if (bCanceled)
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file download from %s"), *URL);
-		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()}).GetFuture();
 	}
 
 	if (ChunkRange.X < 0 || ChunkRange.Y <= 0 || ChunkRange.X > ChunkRange.Y)
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: chunk range (%lld; %lld) is invalid"), *URL, ChunkRange.X, ChunkRange.Y);
-		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()}).GetFuture();
 	}
 
 	if (ChunkRange.Y - ChunkRange.X + 1 > ContentSize)
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: chunk range (%lld; %lld) is out of range (%lld)"), *URL, ChunkRange.X, ChunkRange.Y, ContentSize);
-		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()}).GetFuture();
 	}
 
-	TWeakPtr<FLanguageModelDownloader> WeakThisPtr = AsShared();
+	TWeakPtr<FRuntimeChunkDownloader_Recognizer> WeakThisPtr = AsShared();
 
 #if UE_VERSION_NEWER_THAN(4, 26, 0)
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequestRef = FHttpModule::Get().CreateRequest();
@@ -284,46 +377,51 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFileByChunk(const FSt
 	const FString RangeHeaderValue = FString::Format(TEXT("bytes={0}-{1}"), {ChunkRange.X, ChunkRange.Y});
 	HttpRequestRef->SetHeader(TEXT("Range"), RangeHeaderValue);
 
-	HttpRequestRef->OnRequestProgress().BindLambda([WeakThisPtr, ContentSize, ChunkRange, OnProgress](FHttpRequestPtr Request, int32 BytesSent, int32 BytesReceived)
+	HttpRequestRef->
+#if UE_VERSION_OLDER_THAN(5, 4, 0)
+		OnRequestProgress().BindLambda([WeakThisPtr, ContentSize, ChunkRange, OnProgress](FHttpRequestPtr Request, int32 BytesSent, int32 BytesReceived)
+#else
+		OnRequestProgress64().BindLambda([WeakThisPtr, ContentSize, ChunkRange, OnProgress](FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
+#endif
 	{
-		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 		if (SharedThis.IsValid())
 		{
-			const float Progress = static_cast<float>(BytesReceived) / ContentSize;
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Verbose, TEXT("Downloaded %d bytes of file chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), BytesReceived, *Request->GetURL(), ChunkRange.X, ChunkRange.Y, ContentSize, Progress);
+			const float Progress = ContentSize <= 0 ? 0.0f : static_cast<float>(BytesReceived) / ContentSize;
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloaded %lld bytes of file chunk from %s. Range: {%lld; %lld}, Overall: %lld, Progress: %f"), static_cast<int64>(BytesReceived), *Request->GetURL(), ChunkRange.X, ChunkRange.Y, ContentSize, Progress);
 			OnProgress(BytesReceived, ContentSize);
 		}
 	});
 
-	TSharedPtr<TPromise<TArray64<uint8>>> PromisePtr = MakeShared<TPromise<TArray64<uint8>>>();
-	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThisPtr, PromisePtr, URL, Timeout, ContentType, ContentSize, ChunkRange, OnProgress](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
+	TSharedPtr<TPromise<FRuntimeChunkDownloaderResult_Recognizer>> PromisePtr = MakeShared<TPromise<FRuntimeChunkDownloaderResult_Recognizer>>();
+	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThisPtr, PromisePtr, URL, ChunkRange](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
 	{
-		TSharedPtr<FLanguageModelDownloader> SharedThis = WeakThisPtr.Pin();
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
 		if (!SharedThis.IsValid())
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file chunk from %s: downloader has been destroyed"), *URL);
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
 			return;
 		}
 
 		if (SharedThis->bCanceled)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file chunk download from %s"), *URL);
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()});
 			return;
 		}
 
 		if (!bSuccess || !Response.IsValid())
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: request failed"), *Request->GetURL());
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
 			return;
 		}
 
 		if (Response->GetContentLength() <= 0)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: content length is 0"), *Request->GetURL());
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
 			return;
 		}
 
@@ -332,24 +430,113 @@ TFuture<TArray64<uint8>> FLanguageModelDownloader::DownloadFileByChunk(const FSt
 		if (ContentLength != ChunkRange.Y - ChunkRange.X + 1)
 		{
 			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: content length (%lld) does not match the expected length (%lld)"), *Request->GetURL(), ContentLength, ChunkRange.Y - ChunkRange.X + 1);
-			PromisePtr->SetValue(TArray64<uint8>());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
 			return;
 		}
-		
-		PromisePtr->SetValue(TArray64<uint8>(Response->GetContent()));
+
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Successfully downloaded file chunk from %s. Range: {%lld; %lld}, Overall: %lld"), *Request->GetURL(), ChunkRange.X, ChunkRange.Y, ContentLength);
+		PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Success, TArray64<uint8>(Response->GetContent())});
 	});
 
 	if (!HttpRequestRef->ProcessRequest())
 	{
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file chunk from %s: request failed"), *URL);
-		return MakeFulfilledPromise<TArray64<uint8>>(TArray64<uint8>()).GetFuture();
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()}).GetFuture();
 	}
 
 	HttpRequestPtr = HttpRequestRef;
 	return PromisePtr->GetFuture();
 }
 
-TFuture<int64> FLanguageModelDownloader::GetContentSize(const FString& URL, float Timeout)
+TFuture<FRuntimeChunkDownloaderResult_Recognizer> FRuntimeChunkDownloader_Recognizer::DownloadFileByPayload(const FString& URL, float Timeout, const FString& ContentType, const FOnProgress& OnProgress)
+{
+	if (bCanceled)
+	{
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file download from %s"), *URL);
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()}).GetFuture();
+	}
+
+	TWeakPtr<FRuntimeChunkDownloader_Recognizer> WeakThisPtr = AsShared();
+
+#if UE_VERSION_NEWER_THAN(4, 26, 0)
+	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequestRef = FHttpModule::Get().CreateRequest();
+#else
+	const TSharedRef<IHttpRequest> HttpRequestRef = FHttpModule::Get().CreateRequest();
+#endif
+
+	HttpRequestRef->SetVerb("GET");
+	HttpRequestRef->SetURL(URL);
+
+#if UE_VERSION_NEWER_THAN(4, 26, 0)
+	HttpRequestRef->SetTimeout(Timeout);
+#else
+	UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("The Timeout feature is only supported in engine version 4.26 or later. Please update your engine to use this feature"));
+#endif
+
+	HttpRequestRef->
+#if UE_VERSION_OLDER_THAN(5, 4, 0)
+		OnRequestProgress().BindLambda([WeakThisPtr, OnProgress](FHttpRequestPtr Request, int32 BytesSent, int32 BytesReceived)
+#else
+		OnRequestProgress64().BindLambda([WeakThisPtr, OnProgress](FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
+#endif
+	{
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
+		if (SharedThis.IsValid())
+		{
+			const int64 ContentLength = Request->GetContentLength();
+			const float Progress = ContentLength <= 0 ? 0.0f : static_cast<float>(BytesReceived) / ContentLength;
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Downloaded %lld bytes of file chunk from %s by payload. Overall: %lld, Progress: %f"), static_cast<int64>(BytesReceived), *Request->GetURL(), static_cast<int64>(Request->GetContentLength()), Progress);
+			OnProgress(BytesReceived, ContentLength);
+		}
+	});
+
+	TSharedPtr<TPromise<FRuntimeChunkDownloaderResult_Recognizer>> PromisePtr = MakeShared<TPromise<FRuntimeChunkDownloaderResult_Recognizer>>();
+	HttpRequestRef->OnProcessRequestComplete().BindLambda([WeakThisPtr, PromisePtr, URL](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSuccess) mutable
+	{
+		TSharedPtr<FRuntimeChunkDownloader_Recognizer> SharedThis = WeakThisPtr.Pin();
+		if (!SharedThis.IsValid())
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Failed to download file from %s by payload: downloader has been destroyed"), *URL);
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+			return;
+		}
+
+		if (SharedThis->bCanceled)
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Warning, TEXT("Canceled file download from %s by payload"), *URL);
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::Cancelled, TArray64<uint8>()});
+			return;
+		}
+
+		if (!bSuccess || !Response.IsValid())
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file from %s by payload: request failed"), *Request->GetURL());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+			return;
+		}
+
+		if (Response->GetContentLength() <= 0)
+		{
+			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file from %s by payload: content length is 0"), *Request->GetURL());
+			PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()});
+			return;
+		}
+
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Successfully downloaded file from %s by payload. Overall: %lld"), *Request->GetURL(), static_cast<int64>(Response->GetContentLength()));
+		return PromisePtr->SetValue(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::SucceededByPayload, TArray64<uint8>(Response->GetContent())});
+	});
+
+	if (!HttpRequestRef->ProcessRequest())
+	{
+		UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to download file from %s by payload: request failed"), *URL);
+		return MakeFulfilledPromise<FRuntimeChunkDownloaderResult_Recognizer>(FRuntimeChunkDownloaderResult_Recognizer{EDownloadToMemoryResult_Recognizer::DownloadFailed, TArray64<uint8>()}).GetFuture();
+	}
+
+	HttpRequestPtr = HttpRequestRef;
+	return PromisePtr->GetFuture();
+}
+
+TFuture<int64> FRuntimeChunkDownloader_Recognizer::GetContentSize(const FString& URL, float Timeout)
 {
 	TSharedPtr<TPromise<int64>> PromisePtr = MakeShared<TPromise<int64>>();
 
@@ -385,13 +572,6 @@ TFuture<int64> FLanguageModelDownloader::GetContentSize(const FString& URL, floa
 			return;
 		}
 
-		if (Response->GetResponseCode() == EHttpResponseCodes::NotFound)
-		{
-			UE_LOG(LogEditorRuntimeSpeechRecognizer, Error, TEXT("Failed to get size of file from %s: file not found"), *URL);
-			PromisePtr->SetValue(0);
-			return;
-		}
-
 		UE_LOG(LogEditorRuntimeSpeechRecognizer, Log, TEXT("Got size of file from %s: %lld"), *URL, ContentLength);
 		PromisePtr->SetValue(ContentLength);
 	});
@@ -406,7 +586,7 @@ TFuture<int64> FLanguageModelDownloader::GetContentSize(const FString& URL, floa
 	return PromisePtr->GetFuture();
 }
 
-void FLanguageModelDownloader::CancelDownload()
+void FRuntimeChunkDownloader_Recognizer::CancelDownload()
 {
 	bCanceled = true;
 	if (HttpRequestPtr.IsValid())
