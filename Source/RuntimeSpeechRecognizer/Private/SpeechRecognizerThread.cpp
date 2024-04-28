@@ -782,6 +782,13 @@ uint32 FSpeechRecognizerThread::Run()
 		Audio::FAlignedFloatBuffer NewQueuedBuffer;
 		while (AudioQueue.Dequeue(NewQueuedBuffer))
 		{
+			// Resize the buffer to the minimum required size (1 second, plus 10% more due to a minor bug in checking the buffer size)
+			// see https://github.com/ggerganov/whisper.cpp/issues/39
+			constexpr float MinBufferDurationSec = 1.1;
+			if (NewQueuedBuffer.Num() < WHISPER_SAMPLE_RATE * MinBufferDurationSec)
+			{
+				NewQueuedBuffer.AddZeroed(WHISPER_SAMPLE_RATE * MinBufferDurationSec - NewQueuedBuffer.Num());
+			}
 			if (whisper_full_parallel(WhisperState.WhisperContext, *WhisperState.WhisperParameters, NewQueuedBuffer.GetData(), NewQueuedBuffer.Num(), 1) != 0)
 			{
 				UE_LOG(LogRuntimeSpeechRecognizer, Error, TEXT("Failed to process audio data with the size of %d samples to the whisper recognizer"), NewQueuedBuffer.Num());
