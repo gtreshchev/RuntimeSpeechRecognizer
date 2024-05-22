@@ -3,6 +3,7 @@
 #include "SpeechRecognizerStringUtils.h"
 
 #include "SpeechRecognizerDefines.h"
+#include "Math/UnrealMathUtility.h"
 #include "Algo/LevenshteinDistance.h"
 
 float USpeechRecognizerStringUtils::ComputeLevenshteinSimilarity(const FString& BaseString, const FString& CandidateString)
@@ -18,7 +19,7 @@ float USpeechRecognizerStringUtils::ComputeLevenshteinSimilarity(const FString& 
 	}
 
 	// Compute similarity using Levenshtein distance
-	const float WorstCase = BaseStringTrimmed.Len() + CandidateStringTrimmed.Len();
+	const float WorstCase = FMath::Max3(CandidateStringTrimmed.Len(), BaseStringTrimmed.Len(), 1);
 	const float Similarity = 1.0f - (Algo::LevenshteinDistance(BaseStringTrimmed, CandidateStringTrimmed) / WorstCase);
 
 	UE_LOG(LogRuntimeSpeechRecognizer, Verbose, TEXT("Levenshtein similarity between '%s' and '%s' is %f"), *BaseStringTrimmed, *CandidateStringTrimmed, Similarity);
