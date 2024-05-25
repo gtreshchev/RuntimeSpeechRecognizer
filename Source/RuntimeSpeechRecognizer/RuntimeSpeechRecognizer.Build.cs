@@ -11,8 +11,7 @@ public class RuntimeSpeechRecognizer : ModuleRules
 		
 		// Enable CPU instruction sets
 #if UE_5_3_OR_LATER
-		// Increase to AVX2 OR AVX512 for better performance (if your CPU supports it)
-		MinCpuArchX64 = MinimumCpuArchitectureX64.AVX;
+		MinCpuArchX64 = MinimumCpuArchitectureX64.Default;
 #else
 		bUseAVX = true;
 #endif
