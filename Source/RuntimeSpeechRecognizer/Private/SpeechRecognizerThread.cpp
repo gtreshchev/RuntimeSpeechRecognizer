@@ -56,7 +56,12 @@ void WhisperNewTextSegmentCallback(whisper_context* WhisperContext, whisper_stat
 	for (int32 Index = StartIndex; Index < TotalSegmentCount; ++Index)
 	{
 		const char* TextPerSegment = whisper_full_get_segment_text(WhisperContext, static_cast<int>(Index));
+		// StringCast from UTF8CHAR to TCHAR is not supported in UE 5.0 and older
+#if UE_VERSION_OLDER_THAN(5, 1, 0)
 		auto TextPerSegment_TCHAR = StringCast<TCHAR>((const ANSICHAR*)TextPerSegment);
+#else
+		auto TextPerSegment_TCHAR = StringCast<TCHAR>((const ANSICHAR*)TextPerSegmentTextPerSegment);
+#endif
 		FString TextPerSegment_String = TextPerSegment_TCHAR.Get();
 
 		AsyncTask(ENamedThreads::AnyThread, [SpeechRecognizerSharedPtr, TextPerSegment_String = MoveTemp(TextPerSegment_String)]() mutable
