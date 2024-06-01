@@ -201,15 +201,22 @@ public:
 	 * Returns the default parameters suitable for non-streaming speech recognition
 	 * @return The default parameters suitable for non-streaming speech recognition
 	 */
-	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Setters|All")
+	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Getters|All")
 	static FSpeechRecognitionParameters GetNonStreamingDefaults();
 
 	/**
 	 * Returns the default parameters suitable for streaming speech recognition
 	 * @return The default parameters suitable for streaming speech recognition
 	 */
-	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Setters|All")
+	UFUNCTION(BlueprintPure, Category = "Runtime Speech Recognizer|Getters|All")
 	static FSpeechRecognitionParameters GetStreamingDefaults();
+
+	/**
+	 * Returns the current recognition parameters
+	 * @return The current recognition parameters
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Runtime Speech Recognizer|Getters|All")
+	FSpeechRecognitionParameters GetRecognitionParameters() const;
 
 	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
