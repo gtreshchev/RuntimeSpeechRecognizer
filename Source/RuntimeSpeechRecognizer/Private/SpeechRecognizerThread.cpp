@@ -893,6 +893,11 @@ FSpeechRecognitionParameters FSpeechRecognizerThread::GetStreamingDefaults()
 	return FSpeechRecognitionParameters::GetStreamingDefaults();
 }
 
+FSpeechRecognitionParameters FSpeechRecognizerThread::GetRecognitionParameters() const
+{
+	return RecognitionParameters;
+}
+
 bool FSpeechRecognizerThread::SetNonStreamingDefaults()
 {
 	if (!GetIsStopped())

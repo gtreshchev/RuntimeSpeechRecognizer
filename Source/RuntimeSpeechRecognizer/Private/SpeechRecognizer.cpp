@@ -122,6 +122,11 @@ FSpeechRecognitionParameters USpeechRecognizer::GetStreamingDefaults()
 	return FSpeechRecognizerThread::GetStreamingDefaults();
 }
 
+FSpeechRecognitionParameters USpeechRecognizer::GetRecognitionParameters() const
+{
+	return Thread->GetRecognitionParameters();
+}
+
 bool USpeechRecognizer::SetNonStreamingDefaults()
 {
 	return Thread->SetNonStreamingDefaults();

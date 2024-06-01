@@ -305,6 +305,12 @@ public:
 	static FSpeechRecognitionParameters GetStreamingDefaults();
 
 	/**
+	 * Returns the current recognition parameters
+	 * @return The current recognition parameters
+	 */
+	FSpeechRecognitionParameters GetRecognitionParameters() const;
+
+	/**
 	 * Sets the default parameters suitable for non-streaming speech recognition
 	 *
 	 * @return True if the parameters were set successfully, false otherwise
