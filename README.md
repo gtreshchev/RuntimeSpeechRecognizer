@@ -34,7 +34,7 @@
 - Customizable properties
 - Easy selection of model size and language in settings
 - No static libraries or external dependencies
-- Cross-platform compatibility
+- Cross-platform compatibility (Windows, Mac, Linux, Android, iOS, etc)
 
 ## Additional information
 
