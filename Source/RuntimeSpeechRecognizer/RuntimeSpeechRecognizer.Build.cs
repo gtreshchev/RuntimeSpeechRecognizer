@@ -48,6 +48,10 @@ public class RuntimeSpeechRecognizer : ModuleRules
 			}
 		}
 
-		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "whisper.cpp"));
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "whisper.cpp", "include"));
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "whisper.cpp", "src"));
+
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "ggml", "include"));
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "ggml", "src"));
 	}
 }
