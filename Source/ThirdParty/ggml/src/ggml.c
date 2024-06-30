@@ -19059,9 +19059,9 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = 1*ggml_tensor_overhead();
 
             struct ggml_init_params params = {
-                .mem_size   = fsize + overhead,
-                .mem_buffer = NULL,
-                .no_alloc   = false,
+                /*.mem_size   =*/ fsize + overhead,
+                /*.mem_buffer =*/ NULL,
+                /*.no_alloc   =*/ false,
             };
 
             *ctx_data = ggml_init(params);
@@ -19115,9 +19115,9 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = (n_leafs + n_nodes)*ggml_tensor_overhead() + ggml_graph_overhead_custom(graph_size, false);
 
             struct ggml_init_params params = {
-                .mem_size   = size_eval + overhead,
-                .mem_buffer = NULL,
-                .no_alloc   = true,
+                /*.mem_size   =*/ size_eval + overhead,
+                /*.mem_buffer =*/ NULL,
+                /*.no_alloc   =*/ true,
             };
 
             *ctx_eval = ggml_init(params);
@@ -20974,9 +20974,9 @@ struct gguf_context * gguf_init_from_file(const char * fname, struct gguf_init_p
             (ctx->header.n_tensors + 1)*ggml_tensor_overhead() + ctx->size;
 
         struct ggml_init_params pdata = {
-            .mem_size   = mem_size,
-            .mem_buffer = NULL,
-            .no_alloc   = params.no_alloc,
+            /*.mem_size   =*/ mem_size,
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ params.no_alloc,
         };
 
         *params.ctx = ggml_init(pdata);
