@@ -77,6 +77,17 @@ void USpeechRecognizerSettings::PostEditChangeProperty(FPropertyChangedEvent& Pr
 #endif
 			SaveConfig();
 		}
+
+		if (ModelSize != ESpeechRecognizerModelSize::Custom)
+		{
+			ModelDownloadBaseUrl = GetModelDownloadBaseUrl(ModelSize, ModelLanguage);
+#if UE_VERSION_OLDER_THAN(5, 0, 0)
+			UpdateDefaultConfigFile();
+#else
+			TryUpdateDefaultConfigFile();
+#endif
+			SaveConfig();
+		}
 	}
 }
 
