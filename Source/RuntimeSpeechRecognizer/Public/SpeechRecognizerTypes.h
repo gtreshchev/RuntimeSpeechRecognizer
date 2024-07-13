@@ -33,13 +33,17 @@ enum class ESpeechRecognizerModelSize : uint8
 	Base_Q5_1 UMETA(DisplayName = "Base Quantized (Q5_1)", ToolTip = "Base model with quantization to 5 bits and 1 decimal point"),
 	Small,
 	Small_Q5_1 UMETA(DisplayName = "Small Quantized (Q5_1)", ToolTip = "Small model with quantization to 5 bits and 1 decimal point"),
+	Distil_Small UMETA(DisplayName = "Distil Small", ToolTip = "Distilled version of the Small model"),
 	Medium,
 	Medium_Q5_0 UMETA(DisplayName = "Medium Quantized (Q5_0)", ToolTip = "Medium model with quantization to 5 bits and 0 decimal points"),
+	Distil_Medium UMETA(DisplayName = "Distil Medium", ToolTip = "Distilled version of the Medium model"),
 	Large_V1,
 	Large_V2,
 	Large_V2_Q5_0 UMETA(DisplayName = "Large V2 Quantized (Q5_0)", ToolTip = "Large V2 model with quantization to 5 bits and 0 decimal points"),
+	Distil_Large_V2 UMETA(DisplayName = "Distil Large V2", ToolTip = "Distilled version of the Large V2 model"),
 	Large_V3,
 	Large_V3_Q5_0 UMETA(DisplayName = "Large V3 Quantized (Q5_0)", ToolTip = "Large V3 model with quantization to 5 bits and 0 decimal points"),
+	Distil_Large_V3 UMETA(DisplayName = "Distil Large V3", ToolTip = "Distilled version of the Large V3 model. Please prefer this over the Large V3 model, as it could be 5x faster"),
 	Custom UMETA(ToolTip = "Custom model size. The model size will be determined by the language model file name (e.g. 'ggml-medium.en-q5_0.bin'")
 };
 
@@ -48,7 +52,6 @@ enum class ESpeechRecognizerModelSize : uint8
  */
 RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpeechRecognizerModelSize ModelSize)
 {
-	// English-only model language is not supported for large models
 	if (ModelSize == ESpeechRecognizerModelSize::Large_V1 ||
 		ModelSize == ESpeechRecognizerModelSize::Large_V2 || ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0 ||
 		ModelSize == ESpeechRecognizerModelSize::Large_V3 || ModelSize == ESpeechRecognizerModelSize::Large_V3_Q5_0)
@@ -63,8 +66,10 @@ RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpe
  */
 RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportMultilingualModelLanguage(ESpeechRecognizerModelSize ModelSize)
 {
-	// Multilingual model language is not supported for Tiny_Q8_0 models
-	if (ModelSize == ESpeechRecognizerModelSize::Tiny_Q8_0)
+	if (ModelSize == ESpeechRecognizerModelSize::Tiny_Q8_0 || ModelSize == ESpeechRecognizerModelSize::Distil_Small ||
+		ModelSize == ESpeechRecognizerModelSize::Distil_Medium ||
+		ModelSize == ESpeechRecognizerModelSize::Distil_Large_V2 ||
+		ModelSize == ESpeechRecognizerModelSize::Distil_Large_V3)
 	{
 		return false;
 	}
@@ -402,5 +407,36 @@ RUNTIMESPEECHRECOGNIZER_API inline const char* EnumToString(ESpeechRecognizerLan
 		return "su";
 	default:
 		return "en";
+	}
+}
+
+RUNTIMESPEECHRECOGNIZER_API inline FString GetModelDownloadBaseUrl(ESpeechRecognizerModelSize ModelSize, ESpeechRecognizerModelLanguage ModelLanguage)
+{
+	switch (ModelSize) {
+	case ESpeechRecognizerModelSize::Tiny:
+	case ESpeechRecognizerModelSize::Tiny_Q5_1:
+	case ESpeechRecognizerModelSize::Tiny_Q8_0:
+	case ESpeechRecognizerModelSize::Base:
+	case ESpeechRecognizerModelSize::Base_Q5_1:
+	case ESpeechRecognizerModelSize::Small:
+	case ESpeechRecognizerModelSize::Small_Q5_1:
+	case ESpeechRecognizerModelSize::Medium:
+	case ESpeechRecognizerModelSize::Medium_Q5_0:
+	case ESpeechRecognizerModelSize::Large_V1:
+	case ESpeechRecognizerModelSize::Large_V2:
+	case ESpeechRecognizerModelSize::Large_V2_Q5_0:
+	case ESpeechRecognizerModelSize::Large_V3:
+	case ESpeechRecognizerModelSize::Large_V3_Q5_0:
+		return TEXT("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/");
+	case ESpeechRecognizerModelSize::Distil_Small:
+		return TEXT("https://huggingface.co/distil-whisper/distil-small.en/resolve/main/");
+	case ESpeechRecognizerModelSize::Distil_Medium:
+		return TEXT("https://huggingface.co/distil-whisper/distil-medium.en/resolve/main/");
+	case ESpeechRecognizerModelSize::Distil_Large_V2:
+		return TEXT("https://huggingface.co/distil-whisper/distil-large-v2/resolve/main/");
+	case ESpeechRecognizerModelSize::Distil_Large_V3:
+		return TEXT("https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/");
+	default:
+		return TEXT("");
 	}
 }

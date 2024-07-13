@@ -331,13 +331,17 @@ FString FRuntimeSpeechRecognizerEditorModule::GetLMFileName(ESpeechRecognizerMod
 		case ESpeechRecognizerModelSize::Base_Q5_1: return TEXT("{Prefix}base{LanguageCode}-q5_1{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Small: return TEXT("{Prefix}small{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Small_Q5_1: return TEXT("{Prefix}small{LanguageCode}-q5_1{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Distil_Small: return TEXT("{Prefix}distil-small{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Medium: return TEXT("{Prefix}medium{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Medium_Q5_0: return TEXT("{Prefix}medium{LanguageCode}-q5_0{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Distil_Medium: return TEXT("{Prefix}medium-32-2{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V1: return TEXT("{Prefix}large-v1{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V2: return TEXT("{Prefix}large-v2{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V2_Q5_0: return TEXT("{Prefix}large-v2-q5_0{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Distil_Large_V2: return TEXT("{Prefix}large-32-2{LanguageCode}{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V3: return TEXT("{Prefix}large-v3{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V3_Q5_0: return TEXT("{Prefix}large-v3-q5_0{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Distil_Large_V3: return TEXT("{Prefix}distil-large-v3{LanguageModelExtension}");
 		default: return TEXT("{Prefix}invalid{LanguageCode}{LanguageModelExtension}");
 		}
 		// @formatter:on
