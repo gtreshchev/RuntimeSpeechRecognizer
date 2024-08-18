@@ -17,12 +17,20 @@
 #include "ggml-sycl.h"
 #endif
 
+#ifdef GGML_USE_VULKAN
+#include "ggml-vulkan.h"
+#endif
+
 #ifdef GGML_USE_BLAS
 #include "ggml-blas.h"
 #endif
 
 #ifdef WHISPER_USE_OPENVINO
 #include "openvino/whisper-openvino-encoder.h"
+#endif
+
+#ifdef GGML_USE_CANN
+#include "ggml-cann.h"
 #endif
 
 #include "ggml.h"
@@ -905,7 +913,7 @@ struct whisper_global {
     void * log_callback_user_data = nullptr;
 };
 
-static whisper_global g_state_whisper;
+static whisper_global g_state;
 
 template<typename T>
 static void read_safe(whisper_model_loader * loader, T & dest) {
@@ -1247,7 +1255,7 @@ static ggml_backend_t whisper_backend_init_gpu(const whisper_context_params & pa
 #ifdef GGML_USE_METAL
     if (params.use_gpu) {
         WHISPER_LOG_INFO("%s: using Metal backend\n", __func__);
-        ggml_backend_metal_log_set_callback(g_state_whisper.log_callback, g_state_whisper.log_callback_user_data);
+        ggml_backend_metal_log_set_callback(g_state.log_callback, g_state.log_callback_user_data);
         result = ggml_backend_metal_init();
         if (!result) {
             WHISPER_LOG_ERROR("%s: ggml_backend_metal_init() failed\n", __func__);
@@ -1265,6 +1273,26 @@ static ggml_backend_t whisper_backend_init_gpu(const whisper_context_params & pa
         result = ggml_backend_sycl_init(params.gpu_device);
         if (!result) {
             WHISPER_LOG_ERROR("%s: ggml_backend_sycl_init() failed\n", __func__);
+        }
+    }
+#endif
+
+#ifdef GGML_USE_VULKAN
+    if (params.use_gpu) {
+        WHISPER_LOG_INFO("%s: using Vulkan backend\n", __func__);
+        result = ggml_backend_vk_init(params.gpu_device);
+        if (!result) {
+            WHISPER_LOG_ERROR("%s: ggml_backend_vk_init() failed\n", __func__);
+        }
+    }
+#endif
+
+#ifdef GGML_USE_CANN
+    if (params.use_gpu) {
+        WHISPER_LOG_INFO("%s: using CANN backend\n", __func__);
+        result = ggml_backend_cann_init(params.gpu_device);
+        if (!result) {
+            WHISPER_LOG_ERROR("%s: ggml_backend_cann_init() failed\n", __func__);
         }
     }
 #endif
@@ -1326,6 +1354,20 @@ static ggml_backend_buffer_type_t whisper_default_buffer_type(const whisper_cont
     if (!result)
     {
         result = ggml_backend_sycl_buffer_type(params.gpu_device);
+    }
+#endif
+
+#ifdef GGML_USE_VULKAN
+    if (!result)
+    {
+        result = ggml_backend_vk_buffer_type(params.gpu_device);
+    }
+#endif
+
+#ifdef GGML_USE_CANN
+    if (!result)
+    {
+        result = ggml_backend_vk_buffer_type(params.gpu_device);
     }
 #endif
 
@@ -1917,7 +1959,7 @@ static struct ggml_cgraph * whisper_build_graph_conv(
     ggml_set_input(mel_inp);
 
     ggml_tensor * mel;
-    {
+    if (ggml_nelements(mel_inp) > 0) {
         const int n_len = int(mel_inp->ne[0]);
         const int out_s = 2 * n_ctx;
         const int i0 = std::min(mel_offset, n_len);
@@ -1934,6 +1976,9 @@ static struct ggml_cgraph * whisper_build_graph_conv(
         } else {
             mel = ggml_cont(ctx0, cur);
         }
+    } else {
+        // empty mel - just create a dummy tensor with the correct size
+        mel = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, 2*n_ctx, n_mels);
     }
 
     ggml_set_name(mel, "mel");
@@ -2964,7 +3009,7 @@ struct whisper_global_cache {
 // Mel spectrogram
 
 void whisper_mel_init(whisper_mel & mel, ggml_backend_t backend, int n_len, int n_len_org, int n_mel) {
-    WHISPER_LOG_INFO("%s: n_len = %d, n_len_org = %d, n_mel = %d\n", __func__, n_len, n_len_org, n_mel);
+    //WHISPER_LOG_INFO("%s: n_len = %d, n_len_org = %d, n_mel = %d\n", __func__, n_len, n_len_org, n_mel);
     mel.n_len_org = n_len_org;
     assert(!mel.ctx);
     mel.ctx = ggml_init({ggml_tensor_overhead(), nullptr, true});
@@ -4331,8 +4376,8 @@ const char * whisper_print_system_info(void) {
     s += "VSX = "       + std::to_string(ggml_cpu_has_vsx())       + " | ";
     s += "CUDA = "      + std::to_string(ggml_cpu_has_cuda())      + " | ";
     s += "COREML = "    + std::to_string(whisper_has_coreml())     + " | ";
-    s += "OPENVINO = "  + std::to_string(whisper_has_openvino())          ;
-
+    s += "OPENVINO = "  + std::to_string(whisper_has_openvino())   + " | ";
+    s += "CANN = "      + std::to_string(ggml_cpu_has_cann())             ;
     return s.c_str();
 }
 
@@ -7234,10 +7279,11 @@ struct median_filter_user_data {
     int filter_width;
 };
 
-static void median_filter(struct ggml_tensor * dst , const struct ggml_tensor * a, int ith, int nth, void * userdata) {
+static void median_filter(struct ggml_tensor * dst , const struct ggml_tensor * a, int ith, int /*nth*/, void * userdata) {
+    if (ith != 0) {
+        return;
+    }
     int filter_width = ((median_filter_user_data *) userdata)->filter_width;
-    WHISPER_ASSERT(nth == 1);
-    WHISPER_ASSERT(ith == 0);
     WHISPER_ASSERT(filter_width < a->ne[2]);
     WHISPER_ASSERT(filter_width % 2);
     WHISPER_ASSERT(ggml_n_dims(a) == 3);
@@ -7430,8 +7476,8 @@ static void whisper_exp_compute_token_level_timestamps_dtw(
 }
 
 void whisper_log_set(ggml_log_callback log_callback, void * user_data) {
-    g_state_whisper.log_callback = log_callback ? log_callback : whisper_log_callback_default;
-    g_state_whisper.log_callback_user_data = user_data;
+    g_state.log_callback = log_callback ? log_callback : whisper_log_callback_default;
+    g_state.log_callback_user_data = user_data;
 }
 
 GGML_ATTRIBUTE_FORMAT(2, 3)
@@ -7441,12 +7487,12 @@ static void whisper_log_internal(ggml_log_level level, const char * format, ...)
     char buffer[1024];
     int len = vsnprintf(buffer, 1024, format, args);
     if (len < 1024) {
-        g_state_whisper.log_callback(level, buffer, g_state_whisper.log_callback_user_data);
+        g_state.log_callback(level, buffer, g_state.log_callback_user_data);
     } else {
         char* buffer2 = new char[len+1];
         vsnprintf(buffer2, len+1, format, args);
         buffer2[len] = 0;
-        g_state_whisper.log_callback(level, buffer2, g_state_whisper.log_callback_user_data);
+        g_state.log_callback(level, buffer2, g_state.log_callback_user_data);
         delete[] buffer2;
     }
     va_end(args);

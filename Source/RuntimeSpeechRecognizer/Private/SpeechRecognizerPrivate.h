@@ -92,6 +92,8 @@ extern "C"
 #include "ggml-quants.c"
 //#include "ggml-backend.h"
 #include "ggml-backend.c"
+//#include "ggml-aarch64.h"
+#include "ggml-aarch64.c"
 }
 
 THIRD_PARTY_INCLUDES_END
