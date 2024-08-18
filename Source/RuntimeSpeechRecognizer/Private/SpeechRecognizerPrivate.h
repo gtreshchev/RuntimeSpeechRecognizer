@@ -4,6 +4,11 @@
 
 #include "HAL/Platform.h"
 
+#if PLATFORM_WINDOWS
+#include "Windows/WindowsHWrapper.h"
+#define NOMINMAX				// Macros min(a,b) and max(a,b)
+#endif
+
 #ifndef restrict
 #define restrict
 #endif
@@ -82,6 +87,18 @@ THIRD_PARTY_INCLUDES_START
 #include "whisper.h"
 #include "whisper.cpp"
 
+#ifdef GGML_USE_VULKAN
+#define GGML_ABORT(...) return;
+#include "ggml-vulkan.h"
+#include "ggml-vulkan.cpp"
+#endif
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include "Windows/AllowWindowsPlatformAtomics.h"
+#undef NOATOM
+#undef NOKERNEL
+#endif
 extern "C"
 {
 #include "ggml.h"
@@ -95,6 +112,15 @@ extern "C"
 //#include "ggml-aarch64.h"
 #include "ggml-aarch64.c"
 }
+#if PLATFORM_WINDOWS
+#include "Windows/HideWindowsPlatformAtomics.h"
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
+
+#if GGML_USE_BLAS
+#include "ggml-blas.h"
+#include "ggml-blas.cpp"
+#endif
 
 THIRD_PARTY_INCLUDES_END
 

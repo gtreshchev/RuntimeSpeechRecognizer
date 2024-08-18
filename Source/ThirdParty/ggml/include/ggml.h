@@ -272,8 +272,8 @@
 #define GGML_NORETURN _Noreturn
 #endif
 
-#define GGML_ABORT(...) ggml_abort(__FILE__, __LINE__, __VA_ARGS__)
-#define GGML_ASSERT(x) if (!(x)) GGML_ABORT("GGML_ASSERT(%s) failed", #x)
+#define GGML_ABORT(...) /*ggml_abort(__FILE__, __LINE__, __VA_ARGS__)*/
+#define GGML_ASSERT(x) /*if (!(x)) GGML_ABORT("GGML_ASSERT(%s) failed", #x)*/ check(x)
 
 // used to copy the number of elements and stride in bytes of tensors into local variables.
 // main purpose is to reduce code duplication and improve readability.

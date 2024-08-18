@@ -4127,6 +4127,7 @@ int32_t ggml_get_i32_1d(const struct ggml_tensor * tensor, int i) {
                 GGML_ABORT("fatal error");
             }
     }
+    return 0;
 }
 
 void ggml_set_i32_1d(const struct ggml_tensor * tensor, int i, int32_t value) {
@@ -4191,6 +4192,7 @@ int32_t ggml_get_i32_nd(const struct ggml_tensor * tensor, int i0, int i1, int i
             return ((float *) data)[0];
         default:
             GGML_ABORT("fatal error");
+            return 0;
     }
 }
 
@@ -4264,6 +4266,7 @@ float ggml_get_f32_1d(const struct ggml_tensor * tensor, int i) {
                 GGML_ABORT("fatal error");
             }
     }
+    return 0;
 }
 
 void ggml_set_f32_1d(const struct ggml_tensor * tensor, int i, float value) {
@@ -4322,6 +4325,7 @@ float ggml_get_f32_nd(const struct ggml_tensor * tensor, int i0, int i1, int i2,
             return ((float *) data)[0];
         default:
             GGML_ABORT("fatal error");
+            return 0;
     }
 }
 
