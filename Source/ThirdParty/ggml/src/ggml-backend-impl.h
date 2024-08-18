@@ -80,7 +80,7 @@ extern "C" {
     struct ggml_backend_i {
         const char * (*GGML_CALL get_name)(ggml_backend_t backend);
 
-        void (*GGML_CALL free_f)(ggml_backend_t backend);
+        void (*GGML_CALL free)(ggml_backend_t backend);
 
         // buffer allocation
         ggml_backend_buffer_type_t (*GGML_CALL get_default_buffer_type)(ggml_backend_t backend);
