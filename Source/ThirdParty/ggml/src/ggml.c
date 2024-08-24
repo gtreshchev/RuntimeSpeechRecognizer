@@ -19285,7 +19285,7 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = 1*ggml_tensor_overhead();
 
             struct ggml_init_params params = {
-                /*.mem_size   =*/ fsize + overhead,
+                /*.mem_size   =*/ static_cast<size_t>(fsize + overhead),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ false,
             };
@@ -19341,7 +19341,7 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = (n_leafs + n_nodes)*ggml_tensor_overhead() + ggml_graph_overhead_custom(graph_size, false);
 
             struct ggml_init_params params = {
-                /*.mem_size   =*/ size_eval + overhead,
+                /*.mem_size   =*/ static_cast<size_t>(size_eval + overhead),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };
@@ -20540,7 +20540,7 @@ enum ggml_opt_result ggml_opt(
     bool free_ctx = false;
     if (ctx == NULL) {
         struct ggml_init_params params_ctx = {
-            /*.mem_size   =*/ 16*1024*1024,
+            /*.mem_size   =*/ static_cast<size_t>(16*1024*1024),
             /*.mem_buffer =*/ NULL,
             /*.no_alloc   =*/ false,
         };

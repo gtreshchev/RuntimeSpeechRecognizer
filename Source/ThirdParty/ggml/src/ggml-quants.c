@@ -4652,7 +4652,7 @@ void ggml_vec_dot_q5_0_q8_0(int n, float * restrict s, size_t bs, const void * r
 
         __m256i qx = bytes_from_nibbles_32(x[ib].qs);
         __m256i bxhi = bytes_from_bits_32(x[ib].qh);
-        bxhi = _mm256_andnot_si256(bxhi, _mm256_set1_epi8(static_cast<char>(0xF0)));
+        bxhi = _mm256_andnot_si256(bxhi, _mm256_set1_epi8(static_cast<unsigned char>(0xF0)));
         qx = _mm256_or_si256(qx, bxhi);
 
         __m256i qy = _mm256_loadu_si256((const __m256i *)y[ib].qs);
@@ -4667,7 +4667,7 @@ void ggml_vec_dot_q5_0_q8_0(int n, float * restrict s, size_t bs, const void * r
 #elif defined(__AVX__)
     // Initialize accumulator with zeros
     __m256 acc = _mm256_setzero_ps();
-    __m128i mask = _mm_set1_epi8(static_cast<char>(0xF0));
+    __m128i mask = _mm_set1_epi8(static_cast<unsigned char>(0xF0));
 
     // Main loop
     for (; ib < nb; ++ib) {
