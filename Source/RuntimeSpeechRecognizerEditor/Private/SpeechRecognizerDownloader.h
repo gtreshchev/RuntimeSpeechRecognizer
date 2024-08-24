@@ -7,6 +7,9 @@
 #include "Http.h"
 #include "Templates/SharedPointer.h"
 #include "Misc/EngineVersionComparison.h"
+#if UE_VERSION_OLDER_THAN(5, 1, 0)
+#include <type_traits>
+#endif
 
 /**
 * Possible results from a download request
@@ -32,7 +35,7 @@ template <typename InIntType>
 struct TIntVector2
 {
 	using IntType = InIntType;
-	static_assert(std::is_integral_v<IntType>, "Only an integer types are supported.");
+	static_assert(std::is_integral<IntType>::value, "Only an integer types are supported.");
 
 	union
 	{
