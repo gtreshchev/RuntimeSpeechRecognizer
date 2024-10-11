@@ -14,7 +14,7 @@
     High-performance <a href="https://github.com/openai/whisper">OpenAI's Whisper</a> speech recognition
     <br/>
     <br/>
-    <a href="https://github.com/gtreshchev/RuntimeSpeechRecognizer/wiki"><strong>Explore the docs »</strong></a>
+    <a href="https://docs.georgy.dev/runtime-speech-recognizer/overview"><strong>Explore the docs »</strong></a>
     <br/>
     <br/>
     <a href="https://unrealengine.com/marketplace/product/runtime-speech-recognizer">Marketplace</a>
