@@ -92,7 +92,7 @@ void WhisperNewTextSegmentCallback(whisper_context* WhisperContext, whisper_stat
 			[&TextPerSegment]()
 			{
 				auto TextPerSegment_TCHAR = StringCast<TCHAR>((const ANSICHAR*)TextPerSegmentTextPerSegment);
-				return TextPerSegment_TCHAR.Get();
+				return FString(TextPerSegment_TCHAR.Get());
 			}();
 #endif
 
