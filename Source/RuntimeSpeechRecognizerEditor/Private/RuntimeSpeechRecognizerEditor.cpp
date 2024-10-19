@@ -342,6 +342,8 @@ FString FRuntimeSpeechRecognizerEditorModule::GetLMFileName(ESpeechRecognizerMod
 		case ESpeechRecognizerModelSize::Large_V3: return TEXT("{Prefix}large-v3{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Large_V3_Q5_0: return TEXT("{Prefix}large-v3-q5_0{LanguageModelExtension}");
 		case ESpeechRecognizerModelSize::Distil_Large_V3: return TEXT("{Prefix}distil-large-v3{LanguageModelExtension}");
+		case ESpeechRecognizerModelSize::Large_V3_Turbo: return TEXT("{Prefix}large-v3-turbo");
+		case ESpeechRecognizerModelSize::Large_V3_Turbo_Q5_0: return TEXT("{Prefix}large-v3-turbo-q5_0{LanguageModelExtension}");
 		default: return TEXT("{Prefix}invalid{LanguageCode}{LanguageModelExtension}");
 		}
 		// @formatter:on

@@ -44,6 +44,8 @@ enum class ESpeechRecognizerModelSize : uint8
 	Large_V3,
 	Large_V3_Q5_0 UMETA(DisplayName = "Large V3 Quantized (Q5_0)", ToolTip = "Large V3 model with quantization to 5 bits and 0 decimal points"),
 	Distil_Large_V3 UMETA(DisplayName = "Distil Large V3", ToolTip = "Distilled version of the Large V3 model. Please prefer this over the Large V3 model, as it could be 5x faster"),
+	Large_V3_Turbo UMETA(DisplayName = "Large V3 Turbo", ToolTip = "Large V3 model optimized for faster inference with minimal accuracy trade-off"),
+	Large_V3_Turbo_Q5_0 UMETA(DisplayName = "Large V3 Turbo Quantized (Q5_0)", ToolTip = "Quantized version of Large V3 Turbo for enhanced speed and reduced model size"),
 	Custom UMETA(ToolTip = "Custom model size. The model size will be determined by the language model file name (e.g. 'ggml-medium.en-q5_0.bin'")
 };
 
@@ -54,7 +56,8 @@ RUNTIMESPEECHRECOGNIZER_API inline bool DoesSupportEnglishOnlyModelLanguage(ESpe
 {
 	if (ModelSize == ESpeechRecognizerModelSize::Large_V1 ||
 		ModelSize == ESpeechRecognizerModelSize::Large_V2 || ModelSize == ESpeechRecognizerModelSize::Large_V2_Q5_0 ||
-		ModelSize == ESpeechRecognizerModelSize::Large_V3 || ModelSize == ESpeechRecognizerModelSize::Large_V3_Q5_0)
+		ModelSize == ESpeechRecognizerModelSize::Large_V3 || ModelSize == ESpeechRecognizerModelSize::Large_V3_Q5_0 ||
+		ModelSize == ESpeechRecognizerModelSize::Large_V3_Turbo || ModelSize == ESpeechRecognizerModelSize::Large_V3_Turbo_Q5_0)
 	{
 		return false;
 	}
@@ -427,6 +430,8 @@ RUNTIMESPEECHRECOGNIZER_API inline FString GetModelDownloadBaseUrl(ESpeechRecogn
 	case ESpeechRecognizerModelSize::Large_V2_Q5_0:
 	case ESpeechRecognizerModelSize::Large_V3:
 	case ESpeechRecognizerModelSize::Large_V3_Q5_0:
+	case ESpeechRecognizerModelSize::Large_V3_Turbo:
+	case ESpeechRecognizerModelSize::Large_V3_Turbo_Q5_0:
 		return TEXT("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/");
 	case ESpeechRecognizerModelSize::Distil_Small:
 		return TEXT("https://huggingface.co/distil-whisper/distil-small.en/resolve/main/");
