@@ -31,10 +31,8 @@
 
 #define WHISPER_SAMPLE_RATE 16000
 #define WHISPER_N_FFT       400
-#define WHISPER_N_FFT_HALF  (WHISPER_N_FFT / 2 + 1)
 #define WHISPER_HOP_LENGTH  160
 #define WHISPER_CHUNK_SIZE  30
-#define WHISPER_N_SAMPLES   (WHISPER_SAMPLE_RATE * WHISPER_CHUNK_SIZE)
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,6 +99,7 @@ extern "C" {
         WHISPER_AHEADS_LARGE_V1,
         WHISPER_AHEADS_LARGE_V2,
         WHISPER_AHEADS_LARGE_V3,
+        WHISPER_AHEADS_LARGE_V3_TURBO,
     };
 
     typedef struct whisper_ahead {
@@ -240,6 +239,13 @@ extern "C" {
     //                     GPU, by caching compiled 'blobs' there.
     //                     Set to nullptr if not used.
     // Returns 0 on success. If OpenVINO is not enabled in build, this simply returns 1.
+    WHISPER_API int whisper_ctx_init_openvino_encoder_with_state(
+        struct whisper_context * ctx,
+          struct whisper_state * state,
+                    const char * model_path,
+                    const char * device,
+                    const char * cache_dir);
+
     WHISPER_API int whisper_ctx_init_openvino_encoder(
         struct whisper_context * ctx,
                     const char * model_path,

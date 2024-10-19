@@ -88,7 +88,7 @@ THIRD_PARTY_INCLUDES_START
 #include "whisper.cpp"
 
 #ifdef GGML_USE_VULKAN
-#define GGML_ABORT(...) return;
+//#define GGML_ABORT(...) return;
 #include "ggml-vulkan.h"
 #include "ggml-vulkan.cpp"
 #endif
@@ -108,7 +108,7 @@ extern "C"
 //#include "ggml-quants.h"
 #include "ggml-quants.c"
 //#include "ggml-backend.h"
-#include "ggml-backend.c"
+#include "ggml-backend.cpp"
 //#include "ggml-aarch64.h"
 #include "ggml-aarch64.c"
 }
