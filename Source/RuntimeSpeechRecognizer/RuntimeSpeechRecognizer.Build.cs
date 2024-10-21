@@ -75,7 +75,6 @@ public class RuntimeSpeechRecognizer : ModuleRules
 		}
 		
 		// Add Vulkan support (works on Windows only for now)
-		// TODO: Fix for UE 5.5.
 		// TODO: For some reason, the Vulkan acceleration slows down the recognition, while the CPU works faster, at least on my machine. Investigate.
 		// TODO: Add support for other platforms.
 		// Set to true if you want to use Vulkan.

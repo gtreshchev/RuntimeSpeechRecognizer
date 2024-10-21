@@ -14,7 +14,7 @@
     High-performance <a href="https://github.com/openai/whisper">OpenAI's Whisper</a> speech recognition
     <br/>
     <br/>
-    <a href="https://docs.georgy.dev/runtime-speech-recognizer/overview"><strong>Explore the docs »</strong></a>
+    <a href="https://github.com/gtreshchev/RuntimeSpeechRecognizer/wiki"><strong>Explore the docs »</strong></a>
     <br/>
     <br/>
     <a href="https://unrealengine.com/marketplace/product/runtime-speech-recognizer">Marketplace</a>
@@ -40,6 +40,8 @@
 
 The implementation is based on [whisper.cpp](https://github.com/ggerganov/whisper.cpp).
 
-## Like my work?
+## Legal info
 
-Consider [supporting me](https://ko-fi.com/georgydev). Hire me at [gtreshchev@gmail.com](mailto:gtreshchev@gmail.com).
+Unreal® is a trademark or registered trademark of Epic Games, Inc. in the United States of America and elsewhere.
+
+Unreal® Engine, Copyright 1998 – 2024, Epic Games, Inc. All rights reserved.

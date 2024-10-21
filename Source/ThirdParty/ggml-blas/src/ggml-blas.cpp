@@ -1,4 +1,3 @@
-#include "ggml-impl.h"
 #include "ggml-blas.h"
 #include "ggml-backend-impl.h"
 
@@ -9,12 +8,11 @@
 #   include <Accelerate/Accelerate.h>
 #elif defined(GGML_BLAS_USE_MKL)
 #   include <mkl.h>
-#elif defined(GGML_BLAS_USE_BLIS)
-#   include <blis.h>
-#elif defined(GGML_BLAS_USE_NVPL)
-#   include <nvpl_blas.h>
 #else
 #   include <cblas.h>
+#   ifdef BLIS_ENABLE_CBLAS
+#       include <blis.h>
+#   endif
 #endif
 
 struct ggml_backend_blas_context {
@@ -142,12 +140,8 @@ static void ggml_backend_blas_mul_mat(ggml_backend_blas_context * ctx, struct gg
     openblas_set_num_threads(ctx->n_threads);
 #endif
 
-#if defined(GGML_BLAS_USE_BLIS)
+#if defined(BLIS_ENABLE_CBLAS)
     bli_thread_set_num_threads(ctx->n_threads);
-#endif
-
-#if defined(GGML_BLAS_USE_NVPL)
-    nvpl_blas_set_num_threads(ctx->n_threads);
 #endif
 
     for (int64_t i13 = 0; i13 < ne13; i13++) {
@@ -235,25 +229,25 @@ static void ggml_backend_blas_out_prod(ggml_backend_blas_context * ctx, struct g
 
 // backend interface
 
-static const char * ggml_backend_blas_name(ggml_backend_t backend) {
+GGML_CALL static const char * ggml_backend_blas_name(ggml_backend_t backend) {
     return "BLAS";
 
     GGML_UNUSED(backend);
 }
 
-static void ggml_backend_blas_free(ggml_backend_t backend) {
+GGML_CALL static void ggml_backend_blas_free(ggml_backend_t backend) {
     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
     delete ctx;
     delete backend;
 }
 
-static ggml_backend_buffer_type_t ggml_backend_blas_get_default_buffer_type(ggml_backend_t backend) {
+GGML_CALL static ggml_backend_buffer_type_t ggml_backend_blas_get_default_buffer_type(ggml_backend_t backend) {
     return ggml_backend_cpu_buffer_type();
 
     GGML_UNUSED(backend);
 }
 
-static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+GGML_CALL static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
@@ -276,7 +270,8 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, 
                 break;
 
             default:
-                GGML_ABORT("%s: unsupported op %s\n", __func__, ggml_op_desc(node));
+                fprintf(stderr, "%s: unsupported op %s\n", __func__, ggml_op_desc(node));
+                GGML_ASSERT(false);
         }
     }
 
@@ -285,7 +280,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, 
     GGML_UNUSED(backend);
 }
 
-static bool ggml_backend_blas_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
+GGML_CALL static bool ggml_backend_blas_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
     const struct ggml_tensor * src0 = op->src[0];
     const struct ggml_tensor * src1 = op->src[1];
 
@@ -300,7 +295,7 @@ static bool ggml_backend_blas_supports_op(ggml_backend_t backend, const struct g
     GGML_UNUSED(backend);
 }
 
-static bool ggml_backend_blas_supports_buft(ggml_backend_t backend, ggml_backend_buffer_type_t buft) {
+GGML_CALL static bool ggml_backend_blas_supports_buft(ggml_backend_t backend, ggml_backend_buffer_type_t buft) {
     return ggml_backend_buft_is_host(buft);
 
     GGML_UNUSED(backend);
@@ -322,8 +317,11 @@ static struct ggml_backend_i blas_backend_i = {
     /* .supports_op             = */ ggml_backend_blas_supports_op,
     /* .supports_buft           = */ ggml_backend_blas_supports_buft,
     /* .offload_op              = */ NULL,
+    /* .event_new               = */ NULL,
+    /* .event_free              = */ NULL,
     /* .event_record            = */ NULL,
     /* .event_wait              = */ NULL,
+    /* .event_synchronize       = */ NULL,
 };
 
 static ggml_guid_t ggml_backend_blas_guid(void) {
@@ -337,7 +335,6 @@ ggml_backend_t ggml_backend_blas_init(void) {
     ggml_backend_t backend = new ggml_backend {
         /* .guid      = */ ggml_backend_blas_guid(),
         /* .interface = */ blas_backend_i,
-        /* .device    = */ nullptr,
         /* .context   = */ ctx,
     };
 
@@ -354,7 +351,7 @@ ggml_backend_t ggml_backend_blas_init(void) {
     return backend;
 }
 
-bool ggml_backend_is_blas(ggml_backend_t backend) {
+GGML_CALL bool ggml_backend_is_blas(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_blas_guid());
 }
 

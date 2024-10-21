@@ -9,3 +9,7 @@
 
 # LanguageModels folder containing the uassets representing the language models as they are too large
 /Content/LanguageModels/
+
+# IDE
+.vscode
+.idea
