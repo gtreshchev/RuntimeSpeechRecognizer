@@ -1855,7 +1855,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
 
     struct ggml_backend_sched * sched = (ggml_backend_sched*)calloc(1, sizeof(struct ggml_backend_sched));
 
-    // sched->debug = getenv("GGML_SCHED_DEBUG") != NULL;
+    sched->debug = getenv("GGML_SCHED_DEBUG") != NULL;
     sched->n_backends = n_backends;
     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
 
