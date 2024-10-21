@@ -1855,7 +1855,11 @@ ggml_backend_sched_t ggml_backend_sched_new(
 
     struct ggml_backend_sched * sched = (ggml_backend_sched*)calloc(1, sizeof(struct ggml_backend_sched));
 
-    sched->debug = getenv("GGML_SCHED_DEBUG") != NULL;
+    // DH CHANGE START
+    // [dwilson] We realistically won't need to debug at this level and Playstation does not have
+    // the getenv function via stdlib.h
+    sched->debug = false;
+    // DH CHANGE END
     sched->n_backends = n_backends;
     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
 

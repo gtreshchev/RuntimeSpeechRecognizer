@@ -24,7 +24,10 @@
 #include <float.h>
 #include <limits.h>
 #include <stdarg.h>
-#include <signal.h>
+// DH CHANGE START
+// [dwilson] This header does not appear to be used and is absent on PS5
+// #include <signal.h>
+// DH CHANGE END
 #if defined(__gnu_linux__)
 #include <syscall.h>
 #endif
@@ -47,6 +50,13 @@ int ggml_sve_cnt_b = 0;
 #ifdef GGML_USE_LLAMAFILE
 #include <llamafile/sgemm.h>
 #endif
+
+// DH CHANGE START
+// [dwilson] Xbox uses the Microsoft opinion on strdup which is _strdup
+#if PLATFORM_XSX 
+#define strdup _strdup
+#endif
+// DH CHANGE END
 
 #if defined(_MSC_VER)
 // disable "possible loss of data" to avoid hundreds of casts
@@ -148,8 +158,11 @@ typedef pthread_t ggml_thread_t;
 #include <TargetConditionals.h>
 #endif
 
+// DH CHANGE START
+// [dwilson] Added !defined(PLATFORM_PS5) to exclude this from Playstation builds
 #if (defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)) && \
-    (!defined(TARGET_OS_TV) && !defined(TARGET_OS_WATCH))
+    (!defined(TARGET_OS_TV) && !defined(TARGET_OS_WATCH) && !defined(PLATFORM_PS5))
+// DH CHANGE END
 #include <sys/wait.h>
 
 #if defined(__ANDROID__)
