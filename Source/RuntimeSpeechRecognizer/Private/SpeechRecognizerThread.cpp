@@ -543,6 +543,7 @@ TFuture<bool> FSpeechRecognizerThread::StartThread()
 			const FString LongErrorMessage = TEXT("Failed to initialize whisper from the language model");
 			ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
 			SetStartThreadPromiseValue(ThisShared.ToSharedRef(), false);
+			FMemory::Free(ModelBulkDataPtr);
 			return;
 		}
 
@@ -1296,12 +1297,20 @@ void FSpeechRecognizerThread::LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadL
 					return;
 				}
 
+				auto ExecuteResultFromBGThread = [](FOnLanguageModelLoaded&& OnLoadLanguageModel, bool bSuccess, uint8* ModelBulkDataPtr, int64 ModelBulkDataSize) mutable
+				{
+					AsyncTask(ENamedThreads::AnyThread, [OnLoadLanguageModel = MoveTemp(OnLoadLanguageModel), bSuccess, ModelBulkDataPtr, ModelBulkDataSize]() mutable
+					{
+						OnLoadLanguageModel(bSuccess, ModelBulkDataPtr, ModelBulkDataSize);
+					});
+				};
+
 				if (!LazySpeechRecognizerModel.Get())
 				{
 					const FString ShortErrorMessage = TEXT("Language model loading failed");
 					const FString LongErrorMessage = FString::Printf(TEXT("Failed to load the language model asset '%s'"), *AssetPath);
 					ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
-					OnLoadLanguageModel(false, nullptr, 0);
+					ExecuteResultFromBGThread(MoveTemp(OnLoadLanguageModel), false, nullptr, 0);
 					return;
 				}
 
@@ -1316,7 +1325,7 @@ void FSpeechRecognizerThread::LoadLanguageModel(FOnLanguageModelLoaded&& OnLoadL
 					const FString ShortErrorMessage = TEXT("Language model buffer retrieval failed");
 					const FString LongErrorMessage = FString::Printf(TEXT("Failed to retrieve the buffer data of the language model from the asset '%s'"), *AssetPath);
 					ThisShared->ReportError(ShortErrorMessage, LongErrorMessage);
-					OnLoadLanguageModel(false, nullptr, 0);
+					ExecuteResultFromBGThread(MoveTemp(OnLoadLanguageModel), false, nullptr, 0);
 					return;
 				}
 
