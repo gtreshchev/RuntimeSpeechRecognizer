@@ -90,24 +90,16 @@
 #if !defined(__clang__)
 #define GGML_CACHE_ALIGN __declspec(align(GGML_CACHE_LINE))
 
-typedef volatile LONG atomic_int;
-typedef atomic_int atomic_bool;
-typedef atomic_int atomic_flag;
+//typedef volatile LONG atomic_int;
+//typedef atomic_int atomic_bool;
+//typedef atomic_int atomic_flag;
 
-#ifndef ATOMIC_FLAG_INIT
+/*#ifndef ATOMIC_FLAG_INIT
 #define ATOMIC_FLAG_INIT 0
-#endif
+#endif*/
 
-typedef enum {
-    memory_order_relaxed,
-    memory_order_consume,
-    memory_order_acquire,
-    memory_order_release,
-    memory_order_acq_rel,
-    memory_order_seq_cst
-} memory_order;
 
-static void atomic_store(atomic_int * ptr, LONG val) {
+/*static void atomic_store(atomic_int * ptr, LONG val) {
     InterlockedExchange(ptr, val);
 }
 static void atomic_store_explicit(atomic_int * ptr, LONG val, memory_order mo) {
@@ -136,9 +128,9 @@ static void atomic_flag_clear(atomic_flag * ptr) {
 }
 static void atomic_thread_fence(memory_order mo) {
     FPlatformMisc::MemoryBarrier();
-}
+}*/
 #else // clang
-#include <stdatomic.h>
+//#include <stdatomic.h>
 #endif
 
 typedef HANDLE pthread_t;
@@ -172,11 +164,11 @@ static int sched_yield (void) {
 #include <pthread.h>
 #include <atomic>
 
-typedef std::atomic<int> atomic_int;
-typedef std::atomic<bool> atomic_bool;
-typedef std::atomic_flag atomic_flag;
+//typedef std::atomic<int> atomic_int;
+//typedef std::atomic<bool> atomic_bool;
+//typedef std::atomic_flag atomic_flag;
 
-#include <stdatomic.h>
+//#include <stdatomic.h>
 
 #include <sched.h>
 #if defined(__FreeBSD__)
@@ -2096,14 +2088,14 @@ struct ggml_threadpool {
 
     // synchronization primitives
     atomic_int n_graph;       // incremented when there is work to be done (i.e each graph)
-    atomic_int GGML_CACHE_ALIGN n_barrier;
-    atomic_int GGML_CACHE_ALIGN n_barrier_passed;
+    atomic_int n_barrier;
+    atomic_int n_barrier_passed;
     atomic_int current_chunk; // currently processing chunk during Mat_Mul, shared between all the threads.
 
     // these are atomic as an annotation for thread-sanitizer
-    atomic_bool stop;         // Used for stopping the threadpool altogether
-    atomic_bool pause;        // Used for pausing the threadpool or individual threads
-    atomic_bool abort;        // Used for aborting processing of a graph
+    std::atomic_bool stop;         // Used for stopping the threadpool altogether
+    std::atomic_bool pause;        // Used for pausing the threadpool or individual threads
+    std::atomic_bool abort;        // Used for aborting processing of a graph
 
     struct ggml_compute_state * workers;   // per thread state
     int          n_threads_max; // number of threads in the pool
@@ -3263,58 +3255,51 @@ struct ggml_state {
 
 // global state
 static struct ggml_state g_state_ggml;
-static atomic_flag g_state_ggml_critical = ATOMIC_FLAG_INIT;
+static std::atomic_flag g_state_ggml_critical = ATOMIC_FLAG_INIT;
 
 // critical section via spin lock
 inline static void ggml_critical_section_start(void) {
-    while (atomic_flag_test_and_set(&g_state_ggml_critical)) {
+    while (false) {
         // spin
         sched_yield();
     }
 }
 
 static void ggml_barrier(struct ggml_threadpool * tp) {
-    int n_threads = atomic_load_explicit(&tp->n_threads_cur, memory_order_relaxed);
-    if (n_threads == 1) {
-        return;
-    }
+    int n_threads = tp->n_threads_cur.load(std::memory_order_relaxed);
+if (n_threads == 1) {
+    return;
+}
 
-#ifdef GGML_USE_OPENMP
-    #pragma omp barrier
-#else
-    int n_passed = atomic_load_explicit(&tp->n_barrier_passed, memory_order_relaxed);
+    int n_passed = tp->n_barrier_passed.load(std::memory_order_relaxed);
 
-    // enter barrier (full seq-cst fence)
-    int n_barrier = atomic_fetch_add_explicit(&tp->n_barrier, 1, memory_order_seq_cst);
+// enter barrier (full seq-cst fence)
+int n_barrier = tp->n_barrier.fetch_add(1, std::memory_order_seq_cst);
 
-    if (n_barrier == (n_threads - 1)) {
-        // last thread
-        atomic_store_explicit(&tp->n_barrier, 0, memory_order_relaxed);
+if (n_barrier == (n_threads - 1)) {
+    // last thread
+    tp->n_barrier.store(0, std::memory_order_relaxed);
 
-        // exit barrier (fill seq-cst fence)
-        atomic_fetch_add_explicit(&tp->n_barrier_passed, 1, memory_order_seq_cst);
-        return;
-    }
+    // exit barrier (fill seq-cst fence)
+    tp->n_barrier_passed.fetch_add(1, std::memory_order_seq_cst);
+    return;
+}
 
-    // wait for other threads
-    while (atomic_load_explicit(&tp->n_barrier_passed, memory_order_relaxed) == n_passed) {
-        ggml_thread_cpu_relax();
-    }
+// wait for other threads
+while (tp->n_barrier_passed.load(std::memory_order_relaxed) == n_passed) {
+    ggml_thread_cpu_relax();
+}
 
     // exit barrier (full seq-cst fence)
     // TSAN doesn't support standalone fence yet, we use a dummy read-modify-write instead
-    #ifdef GGML_TSAN_ENABLED
-    atomic_fetch_add_explicit(&tp->n_barrier_passed, 0, memory_order_seq_cst);
-    #else
-    atomic_thread_fence(memory_order_seq_cst);
-    #endif
-#endif
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+
 }
 
 // TODO: make this somehow automatically executed
 //       some sort of "sentry" mechanism
 inline static void ggml_critical_section_end(void) {
-    atomic_flag_clear(&g_state_ggml_critical);
+    g_state_ggml_critical.clear(std::memory_order_release);
 }
 
 #if defined(__gnu_linux__)
@@ -3331,6 +3316,7 @@ static uint32_t ggml_get_numa_affinity(void) {
     return 0; // no NUMA support
 }
 #endif
+
 
 void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     if (g_state_ggml.numa.n_nodes > 0) {
@@ -3753,6 +3739,14 @@ static inline int ggml_up(int n, int m) {
 #define HWCAP2_I8MM 0
 #endif
 
+#if !defined(HWCAP_ASIMD)
+#define HWCAP_ASIMD 0
+#endif
+
+#if !defined(HWCAP_SVE)
+#define HWCAP_SVE 0
+#endif
+
 static void ggml_init_arm_arch_features(void) {
 #if defined(__linux__) && defined(__aarch64__)
     uint32_t hwcap = getauxval(AT_HWCAP);
@@ -3839,8 +3833,8 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
             const uint64_t t_start = ggml_time_us(); UNUSED(t_start);
 
             g_state_ggml = ggml_state {
-                /*.contexts =*/ { { 0 } },
-                /*.numa =*/ { ggml_numa_strategy(), ggml_numa_node(),
+                /*.contexts =*/ { { } },
+                /*.numa =*/ { ggml_numa_strategy(), { { { 0 } } },
                     /*.n_nodes =*/ 0,
                     /*.total_cpus =*/ 0,
                 },
@@ -12562,9 +12556,8 @@ UseGgmlGemm1:;
     }
 
     if (ith == 0) {
-        // Every thread starts at ith, so the first unprocessed chunk is nth.  This save a bit of coordination right at the start.
-        atomic_store_explicit(&params->threadpool->current_chunk, nth, memory_order_relaxed);
-    }
+    params->threadpool->current_chunk.store(nth, std::memory_order_relaxed);
+}
 
     ggml_barrier(params->threadpool);
 
@@ -12674,7 +12667,7 @@ UseGgmlGemm2:;
             break;
         }
 
-        current_chunk = atomic_fetch_add_explicit(&params->threadpool->current_chunk, 1, memory_order_relaxed);
+        current_chunk = params->threadpool->current_chunk.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -19890,12 +19883,12 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
     set_numa_thread_affinity(state->ith);
 
     struct ggml_compute_params params = {
-        /*.ith       =*/ state->ith,
-        /*.nth       =*/ atomic_load_explicit(&tp->n_threads_cur, memory_order_relaxed),
-        /*.wsize     =*/ cplan->work_size,
-        /*.wdata     =*/ cplan->work_data,
-        /*.threadpool=*/ tp,
-    };
+    /*.ith       =*/ state->ith,
+    /*.nth       =*/ tp->n_threads_cur.load(std::memory_order_relaxed),
+    /*.wsize     =*/ cplan->work_size,
+    /*.wdata     =*/ cplan->work_data,
+    /*.threadpool=*/ tp,
+};
 
     for (int node_n = 0; node_n < cgraph->n_nodes && !tp->abort; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
@@ -19919,7 +19912,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 // check if thread is active
 static inline bool ggml_graph_compute_thread_active(struct ggml_compute_state * state) {
     struct ggml_threadpool * threadpool = state->threadpool;
-    int n_threads = atomic_load_explicit(&threadpool->n_threads_cur, memory_order_relaxed);
+    int n_threads = threadpool->n_threads_cur.load(std::memory_order_relaxed);
     return (state->ith < n_threads);
 }
 
@@ -19930,7 +19923,7 @@ static inline bool ggml_graph_compute_thread_ready(struct ggml_compute_state * s
     if (state->pending || threadpool->stop || threadpool->pause) { return true; }
 
     // check for new graph/work
-    int new_graph = atomic_load_explicit(&threadpool->n_graph, memory_order_relaxed);
+    int new_graph = threadpool->n_graph.load(std::memory_order_relaxed);
     if (new_graph != state->last_graph) {
         state->pending    = ggml_graph_compute_thread_active(state);
         state->last_graph = new_graph;
@@ -19941,12 +19934,7 @@ static inline bool ggml_graph_compute_thread_ready(struct ggml_compute_state * s
 
 // sync thread state after polling
 static inline void ggml_graph_compute_thread_sync(struct ggml_compute_state * state) {
-    // TSAN doesn't support standalone fence yet, we use a dummy read-modify-write instead
-    #ifdef GGML_TSAN_ENABLED
-    atomic_fetch_add_explicit(&state->threadpool->n_graph, 0, memory_order_seq_cst);
-    #else
-    atomic_thread_fence(memory_order_seq_cst);
-    #endif
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     UNUSED(state);
 }
 
@@ -20034,14 +20022,15 @@ static void ggml_graph_compute_kickoff(struct ggml_threadpool * threadpool, int 
 
     ggml_mutex_lock(&threadpool->mutex);
 
-    GGML_PRINT_DEBUG("threadpool: n_threads_cur %d n_threads %d\n", threadpool->n_threads_cur, n_threads);
+    GGML_PRINT_DEBUG("threadpool: n_threads_cur %d n_threads %d\n", 
+        threadpool->n_threads_cur.load(std::memory_order_relaxed), n_threads);
 
     // Update the number of active threads
-    atomic_store_explicit(&threadpool->n_threads_cur, n_threads, memory_order_relaxed);
+    threadpool->n_threads_cur.store(n_threads, std::memory_order_relaxed);
 
     // Indicate the graph is ready to be processed
     // We need the full seq-cst fence here because of the polling threads (used in thread_sync)
-    atomic_fetch_add_explicit(&threadpool->n_graph, 1, memory_order_seq_cst);
+    threadpool->n_graph.fetch_add(1, std::memory_order_seq_cst);
 
     if (threadpool->pause) {
        // Update main thread prio and affinity to match the threadpool settings
@@ -20181,24 +20170,6 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
         threadpool->ec               = GGML_STATUS_SUCCESS;
     }
 
-#ifdef GGML_USE_OPENMP
-    if (n_threads > 1) {
-        #pragma omp parallel num_threads(n_threads)
-        {
-            #pragma omp single
-            {
-                // update the number of threads from the actual number of threads that we got from OpenMP
-                n_threads = omp_get_num_threads();
-                atomic_store_explicit(&threadpool->n_threads_cur, n_threads, memory_order_relaxed);
-            }
-
-            ggml_graph_compute_thread(&threadpool->workers[omp_get_thread_num()]);
-        }
-    } else {
-        atomic_store_explicit(&threadpool->n_threads_cur, 1, memory_order_relaxed);
-        ggml_graph_compute_thread(&threadpool->workers[0]);
-    }
-#else
     if (n_threads > threadpool->n_threads_max) {
         GGML_LOG_WARN("cplan requested more threads (%d) than available (%d)\n", n_threads, threadpool->n_threads_max);
         n_threads = threadpool->n_threads_max;
@@ -20209,7 +20180,6 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
 
     // This is a work thread too
     ggml_graph_compute_thread(&threadpool->workers[0]);
-#endif
 
     // don't leave affinity set on the main thread
     clear_numa_thread_affinity();
@@ -20504,7 +20474,7 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = 1*ggml_tensor_overhead();
 
             struct ggml_init_params params = {
-                /*.mem_size   =*/ fsize + overhead,
+                /*.mem_size   =*/ (size_t)(fsize + overhead),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ false,
             };
@@ -20560,7 +20530,7 @@ struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context *
             const size_t overhead = (n_leafs + n_nodes)*ggml_tensor_overhead() + ggml_graph_overhead_custom(graph_size, false);
 
             struct ggml_init_params params = {
-                /*.mem_size   =*/ size_eval + overhead,
+                /*.mem_size   =*/ size_t(size_eval + overhead),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
             };

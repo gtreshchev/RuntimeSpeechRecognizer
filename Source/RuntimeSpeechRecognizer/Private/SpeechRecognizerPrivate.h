@@ -30,56 +30,115 @@
 #define GGML_BIG_ENDIAN
 #endif
 
-// Microsoft Visual Studio
-#if defined(_MSC_VER) && !defined(__clang__)
-
-#if (defined(_M_IX86_FP) && _M_IX86_FP >= 2) || defined(_M_X64)
-#ifndef __SSE2__
-#define __SSE2__ 1
-#endif
-#ifndef __SSSE3__
-#define __SSSE3__ 1
-#endif
+// CPU Architecture Detection
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #define ARCH_X86_FAMILY 1
+#elif defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+    #define ARCH_ARM_FAMILY 1
 #endif
 
-#if !defined(__AVX__) && (_MSC_VER >= 1700 && defined(__SSE2__))
-#define __AVX__ 0
-#endif
-#if !defined(__AVX2__) && ((_MSC_VER >= 1800 && defined(__SSE2__)) \
-|| (defined(PLATFORM_ALWAYS_HAS_AVX_2) && PLATFORM_ALWAYS_HAS_AVX_2))
-#define __AVX2__ 0
-#endif
-
-#if !defined(__AVX512F__) && defined(PLATFORM_ALWAYS_HAS_AVX_512) && PLATFORM_ALWAYS_HAS_AVX_512
-#define __AVX512F__ 1
+// Compiler Detection
+#if defined(__clang__)
+    #define COMPILER_CLANG 1
+#elif defined(__GNUC__) || defined(__GNUG__)
+    #define COMPILER_GCC 1
+#elif defined(_MSC_VER)
+    #define COMPILER_MSVC 1
 #endif
 
-/* AVX512 requires VS 15.3 */
-#if !defined(__AVX512F__) && (_MSC_VER >= 1911 && defined(__AVX__))
-// Commented out because it has some platform-specific issues
-//#define __AVX512F__ 1
+// x86 Family Features
+#ifdef ARCH_X86_FAMILY
+    // SSE/SSE2 Detection
+    #if defined(__SSE2__) || (defined(COMPILER_MSVC) && (defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)))
+        #ifndef __SSE2__
+            #define __SSE2__ 1
+        #endif
+    #endif
+
+    // SSSE3 Detection
+    #if defined(__SSSE3__) || (defined(COMPILER_MSVC) && defined(__SSE2__))
+        #ifndef __SSSE3__
+            #define __SSSE3__ 1
+        #endif
+    #endif
+
+    // AVX Detection
+    #if defined(__AVX__) || \
+        (defined(COMPILER_MSVC) && _MSC_VER >= 1700 && defined(__SSE2__)) || \
+        (defined(COMPILER_GCC) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 9)))
+        #ifndef __AVX__
+            #define __AVX__ 0
+        #endif
+    #endif
+
+    // AVX2 Detection
+    #if defined(__AVX2__) || \
+        (defined(COMPILER_MSVC) && _MSC_VER >= 1800 && defined(__SSE2__)) || \
+        (defined(PLATFORM_ALWAYS_HAS_AVX_2) && PLATFORM_ALWAYS_HAS_AVX_2)
+        #ifndef __AVX2__
+            #define __AVX2__ 0
+        #endif
+    #endif
+
+    // AVX-512 Detection
+    #if defined(__AVX512F__) || \
+        (defined(PLATFORM_ALWAYS_HAS_AVX_512) && PLATFORM_ALWAYS_HAS_AVX_512)
+        #ifndef __AVX512F__
+            #define __AVX512F__ 1
+        #endif
+
+        // AVX-512VL Detection (subset of AVX-512)
+        #if defined(__AVX512VL__) || \
+            (defined(COMPILER_MSVC) && _MSC_VER >= 1912)
+            #ifndef __AVX512VL__
+                #define __AVX512VL__ 1
+            #endif
+        #endif
+
+        // AVX-512VBMI Detection
+        #if defined(__AVX512VBMI__) || \
+            (defined(COMPILER_MSVC) && _MSC_VER >= 1914)
+            #ifndef __AVX512VBMI__
+                #define __AVX512VBMI__ 1
+            #endif
+        #endif
+    #endif
+
+    // FMA Detection
+    #if defined(__FMA__) || \
+        (defined(COMPILER_MSVC) && defined(__AVX2__))
+        #ifndef __FMA__
+            #define __FMA__ 1
+        #endif
+    #endif
 #endif
 
-/* AVX512VL not available until VS 15.5 */
-#if defined(__AVX512F__) && _MSC_VER >= 1912
-#define __AVX512VL__ 1
-#endif
+// ARM Family Features
+#ifdef ARCH_ARM_FAMILY
+    // NEON Detection
+    #if defined(__ARM_NEON) || defined(__ARM_NEON__)
+        #ifndef __ARM_NEON__
+            #define __ARM_NEON__ 1
+        #endif
+        #ifndef __ARM_NEON
+            #define __ARM_NEON 1
+        #endif
+    #endif
 
-/* VBMI added in 15.7 */
-#if defined(__AVX512F__) && _MSC_VER >= 1914
-#define __AVX512VBMI__ 1
-#endif
+    // ARM FMA Detection
+    #if defined(__ARM_FEATURE_FMA) || \
+        (defined(__ARM_FP) && defined(__ARM_NEON__))
+        #ifndef __ARM_FEATURE_FMA
+            #define __ARM_FEATURE_FMA 1
+        #endif
+    #endif
 
-#endif
-
-// TODO: Add similar checks for other compilers
-
-#if !defined(__ARM_NEON) && defined(__ARM_NEON__)
-#define __ARM_NEON 1
-#endif
-
-#if !defined(__ARM_FEATURE_FMA) && defined(__arm__)
-#define __ARM_FEATURE_FMA 1
+    // ARM SVE Detection
+    #ifdef __ARM_FEATURE_SVE
+        #ifndef __ARM_FEATURE_SVE
+            #define __ARM_FEATURE_SVE 1
+        #endif
+    #endif
 #endif
 
 THIRD_PARTY_INCLUDES_START

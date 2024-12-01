@@ -10,12 +10,15 @@ public class RuntimeSpeechRecognizer : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		
 		// Enable CPU instruction sets
+		if (!Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
+		{
 #if UE_5_3_OR_LATER
-		// Increase to AVX2 OR AVX512 for better performance (if your CPU supports it)
-		MinCpuArchX64 = MinimumCpuArchitectureX64.AVX;
+			// Increase to AVX2 OR AVX512 for better performance (if your CPU supports it)
+			MinCpuArchX64 = MinimumCpuArchitectureX64.AVX;
 #else
-		bUseAVX = true;
+			bUseAVX = true;
 #endif
+		}
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
