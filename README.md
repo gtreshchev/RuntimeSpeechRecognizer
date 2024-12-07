@@ -16,11 +16,8 @@
     <br/>
     <a href="https://docs.georgy.dev/runtime-speech-recognizer/overview"><strong>Explore the docs »</strong></a>
     <br/>
-    <br/>
-    <a href="https://unrealengine.com/marketplace/product/runtime-speech-recognizer">Marketplace</a>
+    <a href="https://www.fab.com/listings/00ffc308-d7f9-4142-ac4c-4aeaa75ab54b">Fab</a>
     .
-    <a href="https://github.com/gtreshchev/RuntimeSpeechRecognizer/releases">Releases</a>
-    <br/>
     <a href="https://georgy.dev/discord">Discord support chat</a>
   </p>
 
